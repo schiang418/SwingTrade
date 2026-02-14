@@ -430,8 +430,6 @@ def main():
             "Leading Stocks",
             "Leading Stocks in Leading Industries",
             "LSCL",
-            "Bullish Trifecta ChartList",
-            "BTCL",
         ])
         result["leading_stocks"]["date_on_page"] = leading_info["update_date"]
 
