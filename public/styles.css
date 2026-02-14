@@ -473,6 +473,10 @@ tr.clickable {
 }
 
 /* Modal */
+.detail-modal[hidden] {
+  display: none;
+}
+
 .detail-modal {
   position: fixed;
   inset: 0;
