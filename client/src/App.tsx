@@ -261,12 +261,6 @@ export default function App() {
             <span className="px-3 py-1 rounded text-xs font-semibold bg-red-500/10 text-red-500">0-54: Avoid</span>
           </div>
 
-          {/* Ranking Table */}
-          <RankingTable
-            results={ranking.results}
-            onSelectStock={setSelectedStock}
-          />
-
           {/* Portfolio Section */}
           <PortfolioSection
             rankingId={ranking.id}
@@ -274,6 +268,12 @@ export default function App() {
             portfolioStatus={ranking.portfolioStatus}
             onChange={handlePortfolioChange}
             showToast={showToast}
+          />
+
+          {/* Ranking Table */}
+          <RankingTable
+            results={ranking.results}
+            onSelectStock={setSelectedStock}
           />
         </>
       )}
