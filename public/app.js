@@ -33,6 +33,10 @@
   const modalBody = document.getElementById('modal-body');
   const uploadSection = document.getElementById('upload-section');
 
+  // Prevent browser from opening files dropped outside the upload area
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => e.preventDefault());
+
   // File upload handlers
   browseBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -41,17 +45,32 @@
 
   uploadArea.addEventListener('click', () => fileInput.click());
 
-  uploadArea.addEventListener('dragover', (e) => {
+  let dragCounter = 0;
+
+  uploadArea.addEventListener('dragenter', (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragCounter++;
     uploadArea.classList.add('dragover');
   });
 
-  uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
+  uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  uploadArea.addEventListener('dragleave', (e) => {
+    e.stopPropagation();
+    dragCounter--;
+    if (dragCounter === 0) {
+      uploadArea.classList.remove('dragover');
+    }
   });
 
   uploadArea.addEventListener('drop', (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
     uploadArea.classList.remove('dragover');
     if (e.dataTransfer.files.length > 0) {
       handleFile(e.dataTransfer.files[0]);
