@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Swing Trade Ranking System</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Swing Trade Ranking System</h1>
+      <p class="subtitle">Upload your stock list and get ranked swing trade scores</p>
+    </header>
+
+    <section class="upload-section" id="upload-section">
+      <div class="upload-area" id="upload-area">
+        <div class="upload-icon">&#128200;</div>
+        <h2>Upload Stock List</h2>
+        <p>Drop your Excel file here or click to browse</p>
+        <p class="upload-hint">Supported: .xlsx, .xls, .csv &mdash; Must contain a column with stock tickers</p>
+        <input type="file" id="file-input" accept=".xlsx,.xls,.csv" hidden>
+        <button class="btn btn-primary" id="browse-btn">Select File</button>
+      </div>
+      <div class="file-info" id="file-info" hidden>
+        <span class="file-name" id="file-name"></span>
+        <button class="btn btn-small btn-danger" id="clear-file">&#10005;</button>
+      </div>
+    </section>
+
+    <section class="tickers-section" id="tickers-section" hidden>
+      <h3>Detected Tickers (<span id="ticker-count">0</span>)</h3>
+      <div class="ticker-chips" id="ticker-chips"></div>
+      <button class="btn btn-primary btn-large" id="analyze-btn">Analyze &amp; Rank Stocks</button>
+    </section>
+
+    <section class="loading-section" id="loading-section" hidden>
+      <div class="spinner"></div>
+      <p class="loading-text" id="loading-text">Fetching market data from Polygon.io...</p>
+      <p class="loading-sub">This may take a moment depending on the number of stocks</p>
+    </section>
+
+    <section class="results-section" id="results-section" hidden>
+      <div class="results-header">
+        <h2>Swing Trade Rankings</h2>
+        <div class="results-meta">
+          <span id="spy-info"></span>
+          <span id="analyzed-at"></span>
+        </div>
+        <button class="btn btn-small" id="new-analysis-btn">New Analysis</button>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item prime">85-100: Prime Entry</span>
+        <span class="legend-item strong">70-84: Strong Watchlist</span>
+        <span class="legend-item ok">55-69: Trend OK</span>
+        <span class="legend-item avoid">0-54: Avoid</span>
+      </div>
+
+      <div class="table-wrapper">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort="rank">Rank</th>
+              <th class="sortable" data-sort="ticker">Ticker</th>
+              <th class="sortable" data-sort="sector">Sector</th>
+              <th class="sortable" data-sort="industry">Industry</th>
+              <th class="sortable" data-sort="finalScore">Final Score</th>
+              <th class="sortable" data-sort="rsScore">RS Score<br><small>(40%)</small></th>
+              <th class="sortable" data-sort="trendScore">Trend<br><small>(25%)</small></th>
+              <th class="sortable" data-sort="pullbackScore">Pullback<br><small>(20%)</small></th>
+              <th class="sortable" data-sort="volatilityScore">Volatility<br><small>(15%)</small></th>
+              <th>Price</th>
+              <th>RSI(14)</th>
+              <th>ATR%</th>
+              <th>1M Ret%</th>
+              <th>3M Ret%</th>
+              <th>Signal</th>
+            </tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+
+      <div class="errors-section" id="errors-section" hidden>
+        <h3>Fetch Errors</h3>
+        <ul id="errors-list"></ul>
+      </div>
+    </section>
+
+    <section class="detail-modal" id="detail-modal" hidden>
+      <div class="modal-overlay" id="modal-overlay"></div>
+      <div class="modal-content">
+        <button class="modal-close" id="modal-close">&times;</button>
+        <h2 id="modal-ticker"></h2>
+        <div class="modal-body" id="modal-body"></div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
