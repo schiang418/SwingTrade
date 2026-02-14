@@ -88,7 +88,7 @@ def login(driver, userid, password):
 def navigate_to_chartlists(driver):
     log("Navigating to ChartLists page")
     driver.get("https://www.earningsbeats.com/members/chartlists.cfm")
-    time.sleep(3)
+    time.sleep(5)
 
     # Dismiss cookie notice if present
     try:
@@ -101,6 +101,27 @@ def navigate_to_chartlists(driver):
         pass
 
     log("On ChartLists page")
+
+    # Dump page text for debugging so we can see what's actually on the page
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        # Log first 3000 chars to see page structure
+        log(f"Page text preview (first 3000 chars):\n{page_text[:3000]}")
+
+        # Also log all link texts on the page
+        links = driver.find_elements(By.TAG_NAME, "a")
+        link_texts = [l.text.strip() for l in links if l.text.strip()]
+        log(f"Links on page: {link_texts[:30]}")
+
+        # Log all headings and bold elements
+        for tag in ['h1', 'h2', 'h3', 'h4', 'b', 'strong', 'font']:
+            elems = driver.find_elements(By.TAG_NAME, tag)
+            texts = [e.text.strip() for e in elems if e.text.strip()]
+            if texts:
+                log(f"<{tag}> elements: {texts[:20]}")
+    except Exception as e:
+        log(f"Could not dump page text: {e}", "WARNING")
+
     return True
 
 
@@ -112,79 +133,213 @@ def parse_update_date(text):
     return None
 
 
-def find_section_info(driver, heading_text):
-    """Find a chartlist section and extract update date and Excel download link."""
-    try:
-        # Find the heading
-        heading = driver.find_element(
-            By.XPATH, f"//h2[contains(text(), '{heading_text}')] | //h3[contains(text(), '{heading_text}')] | //strong[contains(text(), '{heading_text}')]"
-        )
-        log(f"Found section: {heading_text}")
+def xpath_string(s):
+    """Build an XPath string literal that handles both single and double quotes.
 
-        # Get the parent container - look for surrounding div or section
-        parent = heading.find_element(By.XPATH, "./ancestor::div[1]")
+    If s contains a single quote (e.g. "Matt's"), we can't use '...' directly.
+    Uses concat() to safely handle any combination of quotes.
+    """
+    if "'" not in s:
+        return f"'{s}'"
+    if '"' not in s:
+        return f'"{s}"'
+    # Contains both quote types - use concat()
+    parts = s.split("'")
+    return "concat(" + ", \"'\", ".join(f"'{p}'" for p in parts) + ")"
 
-        # Try to get update date from text near the heading
-        section_text = parent.text
-        update_date = parse_update_date(section_text)
 
-        if not update_date:
-            # Try broader parent
-            try:
-                broader_parent = heading.find_element(By.XPATH, "./ancestor::div[2]")
-                section_text = broader_parent.text
-                update_date = parse_update_date(section_text)
-            except Exception:
-                pass
+def find_section_info(driver, heading_text, alt_texts=None):
+    """Find a chartlist section and extract update date and Excel download link.
 
-        if not update_date:
-            # Try siblings and nearby elements
-            try:
-                # Look for text containing "last update" near the heading
-                nearby = driver.find_elements(
-                    By.XPATH, f"//h2[contains(text(), '{heading_text}')]/following::*[position()<=10]"
-                )
-                for elem in nearby:
-                    date = parse_update_date(elem.text)
+    Uses a broad search strategy across all element types, with WebDriverWait,
+    and tries alternative text variations if provided.
+
+    Args:
+        driver: Selenium WebDriver instance
+        heading_text: Primary text to search for (e.g. 'Leading Stocks ChartList')
+        alt_texts: Optional list of alternative text variations to try
+    """
+    search_texts = [heading_text] + (alt_texts or [])
+
+    heading = None
+    matched_text = None
+
+    for text in search_texts:
+        xs = xpath_string(text)
+
+        # Strategy 1: Search across ALL element types using contains(text(), ...)
+        try:
+            heading = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((
+                    By.XPATH,
+                    f"//*[contains(text(), {xs})]"
+                ))
+            )
+            matched_text = text
+            log(f"Found section '{text}' via text() match in <{heading.tag_name}> tag")
+            break
+        except (TimeoutException, NoSuchElementException):
+            pass
+
+        # Strategy 2: Search using contains(., ...) which checks descendant text too
+        try:
+            # Exclude body/html level matches by targeting specific tags
+            for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'b', 'strong',
+                        'font', 'span', 'div', 'td', 'th', 'a', 'li', 'dt', 'dd', 'label']:
+                try:
+                    elems = driver.find_elements(
+                        By.XPATH,
+                        f"//{tag}[contains(., {xs})]"
+                    )
+                    # Pick the most specific (smallest text length) match
+                    if elems:
+                        elems = sorted(elems, key=lambda e: len(e.text) if e.text else 9999)
+                        heading = elems[0]
+                        matched_text = text
+                        log(f"Found section '{text}' via descendant text in <{tag}> tag")
+                        break
+                except Exception:
+                    continue
+            if heading:
+                break
+        except Exception:
+            pass
+
+        log(f"Could not find '{text}' on page, trying next variation...", "WARNING")
+
+    if not heading:
+        log(f"Could not find section with any of: {search_texts}", "ERROR")
+        # Try a last-resort page-text regex search for update date
+        update_date = _find_date_near_text_in_page(driver, search_texts)
+        return {"update_date": update_date, "excel_link": None}
+
+    # Get update date from nearby context
+    update_date = None
+
+    # Try parent containers at various levels
+    for ancestor_level in range(1, 5):
+        try:
+            parent = heading.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
+            section_text = parent.text or ""
+            update_date = parse_update_date(section_text)
+            if update_date:
+                break
+        except Exception:
+            continue
+
+    if not update_date:
+        # Try following siblings/elements
+        try:
+            mxs = xpath_string(matched_text)
+            nearby = driver.find_elements(
+                By.XPATH,
+                f"//*[contains(text(), {mxs})]/following::*[position()<=15]"
+            )
+            for elem in nearby:
+                try:
+                    date = parse_update_date(elem.text or "")
                     if date:
                         update_date = date
                         break
-            except Exception:
-                pass
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-        log(f"Update date for {heading_text}: {update_date}")
+    if not update_date:
+        # Fallback: search full page text near the heading text
+        update_date = _find_date_near_text_in_page(driver, [matched_text])
 
-        # Find the Microsoft Excel download link near this section
-        excel_link = None
+    log(f"Update date for {heading_text}: {update_date}")
+
+    # Find the Microsoft Excel download link near this section
+    excel_link = _find_excel_link(driver, matched_text, heading)
+
+    return {
+        "update_date": update_date,
+        "excel_link": excel_link,
+    }
+
+
+def _find_date_near_text_in_page(driver, search_texts):
+    """Fallback: search full page text for update date near any of the search texts."""
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        for text in search_texts:
+            idx = page_text.lower().find(text.lower())
+            if idx >= 0:
+                # Look for date pattern within 500 chars after the heading text
+                nearby_text = page_text[idx:idx + 500]
+                date = parse_update_date(nearby_text)
+                if date:
+                    log(f"Found date via page text search near '{text}': {date}")
+                    return date
+    except Exception:
+        pass
+    return None
+
+
+def _find_excel_link(driver, matched_text, heading_elem):
+    """Find the Microsoft Excel download link near the matched section."""
+    excel_link = None
+    mxs = xpath_string(matched_text)
+
+    # Strategy 1: Look for Excel link following the heading element
+    try:
+        links = driver.find_elements(
+            By.XPATH,
+            f"//*[contains(text(), {mxs})]/following::a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'microsoft excel')][1]"
+        )
+        if links:
+            excel_link = links[0]
+            log(f"Found Excel link via following::a from heading")
+            return excel_link
+    except Exception:
+        pass
+
+    # Strategy 2: Look for any link with "Excel" in text or href near the section
+    try:
+        links = driver.find_elements(
+            By.XPATH,
+            f"//*[contains(text(), {mxs})]/following::a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'excel')][1]"
+        )
+        if links:
+            excel_link = links[0]
+            log(f"Found Excel link via 'excel' text match")
+            return excel_link
+    except Exception:
+        pass
+
+    # Strategy 3: Look for links with .xls in href
+    try:
+        links = driver.find_elements(
+            By.XPATH,
+            f"//*[contains(text(), {mxs})]/following::a[contains(@href, '.xls')][1]"
+        )
+        if links:
+            excel_link = links[0]
+            log(f"Found Excel link via .xls href")
+            return excel_link
+    except Exception:
+        pass
+
+    # Strategy 4: Look in parent containers for Excel links
+    for ancestor_level in range(1, 5):
         try:
-            # Look for "Microsoft Excel" link within or near the section
-            links = driver.find_elements(
+            parent = heading_elem.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
+            parent_links = parent.find_elements(
                 By.XPATH,
-                f"//h2[contains(text(), '{heading_text}')]/following::a[contains(text(), 'Microsoft Excel')][1]"
+                ".//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'excel')]"
             )
-            if not links:
-                links = driver.find_elements(
-                    By.XPATH,
-                    f"//h3[contains(text(), '{heading_text}')]/following::a[contains(text(), 'Microsoft Excel')][1]"
-                )
-            if not links:
-                links = driver.find_elements(
-                    By.XPATH,
-                    f"//strong[contains(text(), '{heading_text}')]/following::a[contains(text(), 'Microsoft Excel')][1]"
-                )
-            if links:
-                excel_link = links[0]
-                log(f"Found Excel link for {heading_text}")
-        except Exception as e:
-            log(f"Could not find Excel link for {heading_text}: {e}", "WARNING")
+            if parent_links:
+                excel_link = parent_links[0]
+                log(f"Found Excel link in ancestor level {ancestor_level}")
+                return excel_link
+        except Exception:
+            continue
 
-        return {
-            "update_date": update_date,
-            "excel_link": excel_link,
-        }
-    except Exception as e:
-        log(f"Could not find section '{heading_text}': {e}", "ERROR")
-        return {"update_date": None, "excel_link": None}
+    log(f"Could not find Excel link for '{matched_text}'", "WARNING")
+    return None
 
 
 def wait_for_download(download_dir, timeout=30):
@@ -270,7 +425,12 @@ def main():
             return
 
         # Check Leading Stocks ChartList
-        leading_info = find_section_info(driver, "Leading Stocks ChartList")
+        # Try multiple name variations - the page may use different formatting
+        leading_info = find_section_info(driver, "Leading Stocks ChartList", alt_texts=[
+            "Leading Stocks",
+            "Leading Stocks in Leading Industries",
+            "LSCL",
+        ])
         result["leading_stocks"]["date_on_page"] = leading_info["update_date"]
 
         if leading_info["update_date"] and leading_info["update_date"] != args.leading_date:
@@ -292,10 +452,20 @@ def main():
 
         # Scroll down to find Hot Stocks section
         driver.execute_script("window.scrollBy(0, 800)")
-        time.sleep(1)
+        time.sleep(2)
 
         # Check Matt's Hot Stocks ChartList
-        hot_info = find_section_info(driver, "Hot Stocks ChartList")
+        # Try multiple name variations since this list may have different names on the page
+        # Note: "Matt's" contains an apostrophe - xpath_string() handles this via concat()
+        hot_info = find_section_info(driver, "Hot Stocks ChartList", alt_texts=[
+            "Matt's Hot Stocks ChartList",
+            "Matt's Hot Stocks",
+            "Matts Hot Stocks",
+            "Hot Stocks",
+            "HTCL",
+            "Short Squeeze ChartList",
+            "Short Squeeze",
+        ])
         result["hot_stocks"]["date_on_page"] = hot_info["update_date"]
 
         if hot_info["update_date"] and hot_info["update_date"] != args.hot_date:
