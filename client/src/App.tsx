@@ -1,0 +1,290 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  ChevronLeft, ChevronRight, RefreshCw, Download, Upload, TrendingUp, Loader2,
+} from 'lucide-react';
+import {
+  fetchRanking, fetchDates, triggerCheckAndDownload,
+  RankingData, DateEntry,
+} from './api';
+import RankingTable from './components/RankingTable';
+import PortfolioSection from './components/PortfolioSection';
+import StockDetailModal from './components/StockDetailModal';
+import type { StockResult } from './api';
+
+type ListName = 'leading_stocks' | 'hot_stocks';
+
+const TAB_LABELS: Record<ListName, string> = {
+  leading_stocks: 'Leading Stocks',
+  hot_stocks: "Matt's Hot Stocks",
+};
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<ListName>('leading_stocks');
+  const [ranking, setRanking] = useState<RankingData | null>(null);
+  const [dates, setDates] = useState<DateEntry[]>([]);
+  const [currentDateIdx, setCurrentDateIdx] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [automationLoading, setAutomationLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedStock, setSelectedStock] = useState<StockResult | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const loadDates = useCallback(async (list: ListName) => {
+    try {
+      const d = await fetchDates(list);
+      setDates(d);
+      return d;
+    } catch {
+      setDates([]);
+      return [];
+    }
+  }, []);
+
+  const loadRanking = useCallback(async (list: ListName, date?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchRanking(list, date);
+      setRanking(data);
+    } catch (err: any) {
+      setError(err.message);
+      setRanking(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const d = await loadDates(activeTab);
+      if (d.length > 0) {
+        setCurrentDateIdx(0);
+        await loadRanking(activeTab, d[0].analysisDate);
+      } else {
+        setRanking(null);
+      }
+    })();
+  }, [activeTab, loadDates, loadRanking]);
+
+  const handleTabChange = (tab: ListName) => {
+    setActiveTab(tab);
+    setCurrentDateIdx(0);
+    setRanking(null);
+  };
+
+  const handlePrevDate = async () => {
+    if (currentDateIdx < dates.length - 1) {
+      const newIdx = currentDateIdx + 1;
+      setCurrentDateIdx(newIdx);
+      await loadRanking(activeTab, dates[newIdx].analysisDate);
+    }
+  };
+
+  const handleNextDate = async () => {
+    if (currentDateIdx > 0) {
+      const newIdx = currentDateIdx - 1;
+      setCurrentDateIdx(newIdx);
+      await loadRanking(activeTab, dates[newIdx].analysisDate);
+    }
+  };
+
+  const handleCheckAndDownload = async () => {
+    setAutomationLoading(true);
+    try {
+      const result = await triggerCheckAndDownload();
+      if (result.processed?.leading_stocks || result.processed?.hot_stocks) {
+        showToast('New data downloaded and analyzed!');
+        const d = await loadDates(activeTab);
+        if (d.length > 0) {
+          setCurrentDateIdx(0);
+          await loadRanking(activeTab, d[0].analysisDate);
+        }
+      } else {
+        showToast('No new updates found');
+      }
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAutomationLoading(false);
+    }
+  };
+
+  const handlePortfolioChange = async () => {
+    // Refresh current ranking to reflect portfolio status change
+    if (dates.length > 0) {
+      await loadRanking(activeTab, dates[currentDateIdx]?.analysisDate);
+    }
+  };
+
+  const currentDate = dates[currentDateIdx];
+
+  return (
+    <div className="max-w-[1400px] mx-auto px-4 py-6">
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium
+          ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+          {toast.message}
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="text-center mb-8">
+        <h1 className="text-2xl font-bold mb-1">Swing Trade Ranking System</h1>
+        <p className="text-[#8b8fa3] text-sm">Automated EarningsBeats analysis with portfolio tracking</p>
+      </header>
+
+      {/* Controls Row */}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        {/* Tabs */}
+        <div className="flex bg-[#1a1d27] rounded-lg p-1">
+          {(Object.entries(TAB_LABELS) as [ListName, string][]).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => handleTabChange(key)}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-all
+                ${activeTab === key
+                  ? 'bg-[#4f8ff7] text-white'
+                  : 'text-[#8b8fa3] hover:text-white'
+                }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Check for Updates */}
+        <button
+          onClick={handleCheckAndDownload}
+          disabled={automationLoading}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+            border border-[#2a2e3a] rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+        >
+          {automationLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Download className="w-4 h-4" />
+          )}
+          {automationLoading ? 'Checking...' : 'Check for Updates'}
+        </button>
+      </div>
+
+      {/* Date Navigation */}
+      {dates.length > 0 && (
+        <div className="flex items-center justify-center gap-4 mb-6">
+          <button
+            onClick={handlePrevDate}
+            disabled={currentDateIdx >= dates.length - 1 || loading}
+            className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
+              disabled:opacity-30 transition-all"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+
+          <div className="text-center min-w-[200px]">
+            <div className="text-lg font-bold">{currentDate?.analysisDate}</div>
+            {currentDate?.listUpdateDate && (
+              <div className="text-xs text-[#8b8fa3]">
+                List update: {currentDate.listUpdateDate}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleNextDate}
+            disabled={currentDateIdx <= 0 || loading}
+            className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
+              disabled:opacity-30 transition-all"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <span className="text-xs text-[#8b8fa3]">
+            {currentDateIdx + 1} of {dates.length}
+          </span>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="text-center py-16">
+          <Loader2 className="w-10 h-10 animate-spin text-[#4f8ff7] mx-auto mb-4" />
+          <p className="text-[#8b8fa3]">Loading rankings...</p>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="text-center py-16 text-red-400">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {/* No Data */}
+      {!loading && !error && !ranking?.found && (
+        <div className="text-center py-16">
+          <TrendingUp className="w-12 h-12 text-[#2a2e3a] mx-auto mb-4" />
+          <p className="text-[#8b8fa3] mb-2">No ranking data available for {TAB_LABELS[activeTab]}</p>
+          <p className="text-[#8b8fa3] text-sm">
+            Click "Check for Updates" to download and analyze the latest data from EarningsBeats
+          </p>
+        </div>
+      )}
+
+      {/* Results */}
+      {!loading && ranking?.found && (
+        <>
+          {/* SPY Info + Meta */}
+          <div className="flex items-center gap-4 mb-4 text-xs text-[#8b8fa3]">
+            {ranking.spyData && (
+              <span>
+                SPY: 1M {ranking.spyData.return1m >= 0 ? '+' : ''}{ranking.spyData.return1m.toFixed(1)}%
+                {' | '}
+                3M {ranking.spyData.return3m >= 0 ? '+' : ''}{ranking.spyData.return3m.toFixed(1)}%
+              </span>
+            )}
+            <span>{ranking.stockCount} stocks analyzed</span>
+          </div>
+
+          {/* Legend */}
+          <div className="flex gap-3 mb-4 flex-wrap">
+            <span className="px-3 py-1 rounded text-xs font-semibold bg-green-500/10 text-green-500">85-100: Prime Entry</span>
+            <span className="px-3 py-1 rounded text-xs font-semibold bg-blue-500/10 text-blue-400">70-84: Watchlist</span>
+            <span className="px-3 py-1 rounded text-xs font-semibold bg-yellow-500/10 text-yellow-500">55-69: Caution</span>
+            <span className="px-3 py-1 rounded text-xs font-semibold bg-red-500/10 text-red-500">0-54: Avoid</span>
+          </div>
+
+          {/* Ranking Table */}
+          <RankingTable
+            results={ranking.results}
+            onSelectStock={setSelectedStock}
+          />
+
+          {/* Portfolio Section */}
+          <PortfolioSection
+            rankingId={ranking.id}
+            portfolioId={ranking.portfolioId}
+            portfolioStatus={ranking.portfolioStatus}
+            onChange={handlePortfolioChange}
+            showToast={showToast}
+          />
+        </>
+      )}
+
+      {/* Stock Detail Modal */}
+      {selectedStock && (
+        <StockDetailModal
+          stock={selectedStock}
+          onClose={() => setSelectedStock(null)}
+        />
+      )}
+    </div>
+  );
+}

@@ -1,4 +1,9 @@
 node_modules/
 .env
 uploads/
+dist/
+downloads/
 *.log
+__pycache__/
+*.pyc
+.venv/
