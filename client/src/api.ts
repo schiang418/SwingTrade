@@ -181,6 +181,7 @@ export interface EmaAnalysisData {
     stockCount: number;
     symbols: string[];
     chartlistName: string;
+    imageUrl: string | null;
   } | null;
 }
 

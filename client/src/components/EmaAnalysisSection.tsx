@@ -235,6 +235,21 @@ export default function EmaAnalysisSection({ listName, analysisDate, showToast, 
         </table>
       </div>
 
+      {/* CandleGlance Chart Image */}
+      {data.scanResult?.imageUrl && (
+        <div className="mt-4 bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
+          <h4 className="text-sm font-semibold text-[#8b8fa3] mb-3">
+            CandleGlance Charts - All Scanned Stocks
+          </h4>
+          <img
+            src={data.scanResult.imageUrl}
+            alt="CandleGlance charts for EMA pullback scan results"
+            className="w-full rounded-lg border border-[#2a2e3a]"
+            loading="lazy"
+          />
+        </div>
+      )}
+
       {/* Swing Setup Details (expandable) */}
       <details className="mt-4">
         <summary className="text-[#8b8fa3] text-xs cursor-pointer hover:text-white transition-colors">
