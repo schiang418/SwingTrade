@@ -548,6 +548,7 @@ def main():
     parser.add_argument("--leading-date", default="none", help="Known date for Leading Stocks")
     parser.add_argument("--hot-date", default="none", help="Known date for Hot Stocks")
     parser.add_argument("--download-dir", default="/tmp/eb_downloads", help="Download directory")
+    parser.add_argument("--force", action="store_true", help="Force download regardless of date")
     args = parser.parse_args()
 
     os.makedirs(args.download_dir, exist_ok=True)
@@ -584,8 +585,11 @@ def main():
         result["leading_stocks"]["sc_password"] = leading_info.get("sc_password")
         result["leading_stocks"]["sc_url"] = leading_info.get("sc_url")
 
-        if leading_info["update_date"] and leading_info["update_date"] != args.leading_date:
+        leading_is_new = leading_info["update_date"] and leading_info["update_date"] != args.leading_date
+        if leading_is_new or args.force:
             result["leading_stocks"]["is_new"] = True
+            if args.force and not leading_is_new:
+                log("Force mode: downloading Leading Stocks despite unchanged date")
             # Create subdirectory for this download
             leading_dir = os.path.join(args.download_dir, "leading")
             os.makedirs(leading_dir, exist_ok=True)
@@ -621,8 +625,11 @@ def main():
         result["hot_stocks"]["sc_password"] = hot_info.get("sc_password")
         result["hot_stocks"]["sc_url"] = hot_info.get("sc_url")
 
-        if hot_info["update_date"] and hot_info["update_date"] != args.hot_date:
+        hot_is_new = hot_info["update_date"] and hot_info["update_date"] != args.hot_date
+        if hot_is_new or args.force:
             result["hot_stocks"]["is_new"] = True
+            if args.force and not hot_is_new:
+                log("Force mode: downloading Hot Stocks despite unchanged date")
             hot_dir = os.path.join(args.download_dir, "hot")
             os.makedirs(hot_dir, exist_ok=True)
 

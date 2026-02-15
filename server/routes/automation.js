@@ -16,6 +16,7 @@ router.post('/check-and-download', async (req, res) => {
     const db = getDb();
     const userid = process.env.EARNINGSBEATS_USERID;
     const password = process.env.EARNINGSBEATS_PASSWORD;
+    const force = req.query.force === 'true' || req.body?.force === true;
 
     if (!userid || !password) {
       return res.status(400).json({ error: 'EarningsBeats credentials not configured' });
@@ -31,10 +32,10 @@ router.post('/check-and-download', async (req, res) => {
     const leadingDate = knownDates['leading_stocks'] || 'none';
     const hotDate = knownDates['hot_stocks'] || 'none';
 
-    console.log(`Known dates - Leading: ${leadingDate}, Hot: ${hotDate}`);
+    console.log(`Known dates - Leading: ${leadingDate}, Hot: ${hotDate}${force ? ' (FORCE mode)' : ''}`);
 
     // Run Python automation (downloads Excel + extracts SC info)
-    const result = await runAutomation(userid, password, leadingDate, hotDate);
+    const result = await runAutomation(userid, password, leadingDate, hotDate, force);
 
     if (!result.success) {
       return res.status(500).json({ error: result.error || 'Automation failed' });
@@ -160,7 +161,7 @@ router.get('/status', async (req, res) => {
   }
 });
 
-function runAutomation(userid, password, leadingDate, hotDate) {
+function runAutomation(userid, password, leadingDate, hotDate, force = false) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '../../automation/earningsbeats.py');
     const downloadDir = path.join(__dirname, '../../downloads');
@@ -173,6 +174,10 @@ function runAutomation(userid, password, leadingDate, hotDate) {
       '--hot-date', hotDate,
       '--download-dir', downloadDir,
     ];
+
+    if (force) {
+      args.push('--force');
+    }
 
     console.log('Starting automation...');
     const proc = spawn('python3', args, {

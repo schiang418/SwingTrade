@@ -3,7 +3,7 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, Download, Upload, TrendingUp, Loader2,
 } from 'lucide-react';
 import {
-  fetchRanking, fetchDates, triggerCheckAndDownload,
+  fetchRanking, fetchDates, triggerCheckAndDownload, triggerForceAnalysis,
   RankingData, DateEntry,
 } from './api';
 import RankingTable from './components/RankingTable';
@@ -26,6 +26,7 @@ export default function App() {
   const [currentDateIdx, setCurrentDateIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [automationLoading, setAutomationLoading] = useState(false);
+  const [forceLoading, setForceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedStock, setSelectedStock] = useState<StockResult | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -115,6 +116,27 @@ export default function App() {
     }
   };
 
+  const handleForceAnalysis = async () => {
+    setForceLoading(true);
+    try {
+      const result = await triggerForceAnalysis();
+      if (result.processed?.leading_stocks || result.processed?.hot_stocks) {
+        showToast('Analysis complete! Data re-downloaded and re-analyzed.');
+        const d = await loadDates(activeTab);
+        if (d.length > 0) {
+          setCurrentDateIdx(0);
+          await loadRanking(activeTab, d[0].analysisDate);
+        }
+      } else {
+        showToast('Force analysis completed but no data was processed', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setForceLoading(false);
+    }
+  };
+
   const handlePortfolioChange = async () => {
     // Refresh current ranking to reflect portfolio status change
     if (dates.length > 0) {
@@ -164,7 +186,7 @@ export default function App() {
         {/* Check for Updates */}
         <button
           onClick={handleCheckAndDownload}
-          disabled={automationLoading}
+          disabled={automationLoading || forceLoading}
           className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
             border border-[#2a2e3a] rounded-lg text-sm font-medium transition-all disabled:opacity-50"
         >
@@ -174,6 +196,22 @@ export default function App() {
             <Download className="w-4 h-4" />
           )}
           {automationLoading ? 'Checking...' : 'Check for Updates'}
+        </button>
+
+        {/* Force Analysis */}
+        <button
+          onClick={handleForceAnalysis}
+          disabled={automationLoading || forceLoading}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+            border border-orange-500/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50
+            text-orange-400 hover:text-orange-300"
+        >
+          {forceLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
+          {forceLoading ? 'Analyzing...' : 'Force Analysis'}
         </button>
       </div>
 
