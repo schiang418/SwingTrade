@@ -246,6 +246,60 @@ function _parseStarRating(formatted) {
   return stars || 0;
 }
 
+// Get portfolio comparison data (all portfolios with snapshots, grouped by strategy)
+// NOTE: Must be defined BEFORE /:id to avoid Express matching "comparison" as an id
+router.get('/comparison', async (req, res) => {
+  try {
+    const db = getDb();
+
+    // Get all portfolios ordered by purchase date
+    const allPortfolios = await db
+      .select()
+      .from(portfolios)
+      .orderBy(portfolios.purchaseDate);
+
+    // Get all snapshots for all portfolios
+    const allSnapshots = await db
+      .select()
+      .from(portfolioSnapshots)
+      .orderBy(portfolioSnapshots.snapshotDate);
+
+    // Group snapshots by portfolioId
+    const snapshotsByPortfolio = {};
+    for (const s of allSnapshots) {
+      if (!snapshotsByPortfolio[s.portfolioId]) {
+        snapshotsByPortfolio[s.portfolioId] = [];
+      }
+      snapshotsByPortfolio[s.portfolioId].push({
+        date: s.snapshotDate,
+        totalValue: parseFloat(s.totalValue),
+        totalGainLoss: parseFloat(s.totalGainLoss),
+        totalGainLossPct: parseFloat(s.totalGainLossPct),
+      });
+    }
+
+    // Build portfolio list with parsed numeric fields and snapshots
+    const result = allPortfolios.map(p => ({
+      id: p.id,
+      listName: p.listName,
+      status: p.status,
+      initialCapital: parseFloat(p.initialCapital),
+      currentValue: parseFloat(p.currentValue),
+      totalGainLoss: parseFloat(p.totalGainLoss),
+      totalGainLossPct: parseFloat(p.totalGainLossPct),
+      purchaseDate: p.purchaseDate,
+      closeDate: p.closeDate,
+      holdingDays: p.holdingDays,
+      snapshots: snapshotsByPortfolio[p.id] || [],
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error('Error fetching portfolio comparison:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get portfolio details
 router.get('/:id', async (req, res) => {
   try {
@@ -443,59 +497,6 @@ router.post('/:id/update-prices', async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating prices:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get portfolio comparison data (all portfolios with snapshots, grouped by strategy)
-router.get('/comparison', async (req, res) => {
-  try {
-    const db = getDb();
-
-    // Get all portfolios ordered by purchase date
-    const allPortfolios = await db
-      .select()
-      .from(portfolios)
-      .orderBy(portfolios.purchaseDate);
-
-    // Get all snapshots for all portfolios
-    const allSnapshots = await db
-      .select()
-      .from(portfolioSnapshots)
-      .orderBy(portfolioSnapshots.snapshotDate);
-
-    // Group snapshots by portfolioId
-    const snapshotsByPortfolio = {};
-    for (const s of allSnapshots) {
-      if (!snapshotsByPortfolio[s.portfolioId]) {
-        snapshotsByPortfolio[s.portfolioId] = [];
-      }
-      snapshotsByPortfolio[s.portfolioId].push({
-        date: s.snapshotDate,
-        totalValue: parseFloat(s.totalValue),
-        totalGainLoss: parseFloat(s.totalGainLoss),
-        totalGainLossPct: parseFloat(s.totalGainLossPct),
-      });
-    }
-
-    // Build portfolio list with parsed numeric fields and snapshots
-    const result = allPortfolios.map(p => ({
-      id: p.id,
-      listName: p.listName,
-      status: p.status,
-      initialCapital: parseFloat(p.initialCapital),
-      currentValue: parseFloat(p.currentValue),
-      totalGainLoss: parseFloat(p.totalGainLoss),
-      totalGainLossPct: parseFloat(p.totalGainLossPct),
-      purchaseDate: p.purchaseDate,
-      closeDate: p.closeDate,
-      holdingDays: p.holdingDays,
-      snapshots: snapshotsByPortfolio[p.id] || [],
-    }));
-
-    res.json(result);
-  } catch (err) {
-    console.error('Error fetching portfolio comparison:', err);
     res.status(500).json({ error: err.message });
   }
 });

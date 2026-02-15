@@ -18,7 +18,7 @@ type ListName = 'leading_stocks' | 'hot_stocks';
 
 const TAB_LABELS: Record<ListName, string> = {
   leading_stocks: 'Leading Stocks',
-  hot_stocks: "Matt's Hot Stocks",
+  hot_stocks: 'Hot Stocks',
 };
 
 export default function App() {
