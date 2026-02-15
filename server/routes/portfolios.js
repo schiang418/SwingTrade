@@ -1,7 +1,7 @@
 const express = require('express');
 const { eq, and, desc } = require('drizzle-orm');
 const { getDb, getEasternDate } = require('../db');
-const { portfolios, portfolioHoldings, portfolioSnapshots, rankingResults } = require('../schema');
+const { portfolios, portfolioHoldings, portfolioSnapshots, rankingResults, emaAnalysis } = require('../schema');
 const { fetchDailyBars } = require('../../src/polygon');
 
 const router = express.Router();
@@ -125,6 +125,126 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Create EMA portfolio from top 5 stocks by Gemini star rating
+router.post('/ema', async (req, res) => {
+  try {
+    const db = getDb();
+    const { emaAnalysisId } = req.body;
+
+    // Get the EMA analysis
+    const [analysis] = await db
+      .select()
+      .from(emaAnalysis)
+      .where(eq(emaAnalysis.id, emaAnalysisId));
+
+    if (!analysis) {
+      return res.status(404).json({ error: 'EMA analysis not found' });
+    }
+    if (analysis.portfolioStatus === 'active') {
+      return res.status(400).json({ error: 'EMA portfolio already exists for this analysis' });
+    }
+
+    const stockAnalysisArr = JSON.parse(analysis.stockAnalysis);
+
+    // Sort by star_rating (descending) and take top 5
+    const sorted = stockAnalysisArr
+      .map(s => ({
+        ...s,
+        star_rating: s.star_rating || _parseStarRating(s.ranking_formatted),
+      }))
+      .sort((a, b) => (b.star_rating || 0) - (a.star_rating || 0));
+
+    const top5 = sorted.slice(0, 5);
+    if (top5.length === 0) {
+      return res.status(400).json({ error: 'No stocks to create EMA portfolio from' });
+    }
+
+    const today = getEasternDate();
+    const initialCapital = 100000;
+    const perStock = initialCapital / top5.length;
+
+    const toDate = new Date().toISOString().slice(0, 10);
+    const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const holdings = [];
+    for (const stock of top5) {
+      try {
+        const bars = await fetchDailyBars(stock.symbol, fromDate, toDate);
+        const price = bars && bars.length > 0 ? bars[bars.length - 1].c : null;
+        if (!price) continue;
+
+        const shares = Math.floor((perStock / price) * 10000) / 10000;
+        holdings.push({
+          symbol: stock.symbol,
+          shares: shares.toString(),
+          entryPrice: price.toFixed(2),
+          currentPrice: price.toFixed(2),
+          gainLoss: '0',
+          gainLossPct: '0',
+        });
+      } catch (err) {
+        console.error(`Error fetching price for ${stock.symbol}:`, err.message);
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    if (holdings.length === 0) {
+      return res.status(500).json({ error: 'Could not get prices for any EMA stocks' });
+    }
+
+    // Create portfolio (using a synthetic ranking result ID based on the analysis)
+    const [portfolio] = await db
+      .insert(portfolios)
+      .values({
+        rankingResultId: analysis.scanResultId, // Link to scan result
+        listName: `${analysis.listName}_ema`,
+        status: 'active',
+        initialCapital: initialCapital.toFixed(2),
+        currentValue: initialCapital.toFixed(2),
+        totalGainLoss: '0',
+        totalGainLossPct: '0',
+        purchaseDate: today,
+        holdingDays: 30,
+      })
+      .returning();
+
+    // Create holdings
+    for (const h of holdings) {
+      await db.insert(portfolioHoldings).values({
+        portfolioId: portfolio.id,
+        ...h,
+      });
+    }
+
+    // Create initial snapshot
+    await db.insert(portfolioSnapshots).values({
+      portfolioId: portfolio.id,
+      snapshotDate: today,
+      totalValue: initialCapital.toFixed(2),
+      totalGainLoss: '0',
+      totalGainLossPct: '0',
+      holdingsJson: JSON.stringify(holdings),
+    });
+
+    // Update EMA analysis with portfolio link
+    await db
+      .update(emaAnalysis)
+      .set({ portfolioId: portfolio.id, portfolioStatus: 'active' })
+      .where(eq(emaAnalysis.id, emaAnalysisId));
+
+    res.json({ success: true, portfolio: { ...portfolio, holdings } });
+  } catch (err) {
+    console.error('Error creating EMA portfolio:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function _parseStarRating(formatted) {
+  if (!formatted) return 0;
+  const stars = (formatted.match(/★/g) || []).length;
+  return stars || 0;
+}
 
 // Get portfolio details
 router.get('/:id', async (req, res) => {

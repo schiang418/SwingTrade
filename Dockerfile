@@ -31,8 +31,12 @@ COPY . .
 # Build the React frontend
 RUN npm run build
 
+# Create data directory for EMA scanner output
+RUN mkdir -p /data
+
 # Set environment variables
 ENV NODE_ENV=production
+ENV DATA_DIR=/data
 
 # Expose port
 EXPOSE 3000

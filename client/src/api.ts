@@ -141,6 +141,68 @@ export async function fetchAutomationStatus(): Promise<any[]> {
   return res.json();
 }
 
+// EMA Analysis types
+export interface EmaStockAnalysis {
+  symbol: string;
+  company_name: string;
+  company_description: string;
+  star_rating?: number;
+  ranking_formatted: string;
+  bucket: string;
+  analysis: string;
+  swing_setup: string;
+}
+
+export interface EmaCategorySummary {
+  bucket_name: string;
+  strategy: string;
+  symbols: string[];
+}
+
+export interface EmaAnalysisData {
+  found: boolean;
+  id: number;
+  listName: string;
+  analysisDate: string;
+  categorySummary: EmaCategorySummary[];
+  stockAnalysis: EmaStockAnalysis[];
+  portfolioId: number | null;
+  portfolioStatus: string;
+  scanResult: {
+    stockCount: number;
+    symbols: string[];
+    chartlistName: string;
+  } | null;
+}
+
+export async function fetchEmaAnalysis(listName: string, date?: string): Promise<EmaAnalysisData> {
+  const url = date
+    ? `${BASE}/ema-analysis/${listName}?date=${date}`
+    : `${BASE}/ema-analysis/${listName}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch EMA analysis');
+  return res.json();
+}
+
+export async function fetchEmaDates(listName: string): Promise<{ analysisDate: string; id: number }[]> {
+  const res = await fetch(`${BASE}/ema-analysis/${listName}/dates`);
+  if (!res.ok) throw new Error('Failed to fetch EMA dates');
+  return res.json();
+}
+
+export async function createEmaPortfolio(emaAnalysisId: number): Promise<any> {
+  const res = await fetch(`${BASE}/portfolios/ema`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emaAnalysisId }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || 'Failed to create EMA portfolio');
+  }
+  return res.json();
+}
+
 export async function uploadAndAnalyze(file: File, listName: string): Promise<any> {
   // Upload file
   const formData = new FormData();

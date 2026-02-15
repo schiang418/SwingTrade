@@ -255,9 +255,15 @@ def find_section_info(driver, heading_text, alt_texts=None):
     # Find the Microsoft Excel download link near this section
     excel_link = _find_excel_link(driver, matched_text, heading)
 
+    # Find the StockCharts password and URL near this section
+    sc_password = _find_sc_password(driver, matched_text, heading)
+    sc_url = _find_sc_url(driver, matched_text, heading)
+
     return {
         "update_date": update_date,
         "excel_link": excel_link,
+        "sc_password": sc_password,
+        "sc_url": sc_url,
     }
 
 
@@ -276,6 +282,89 @@ def _find_date_near_text_in_page(driver, search_texts):
                     return date
     except Exception:
         pass
+    return None
+
+
+def _find_sc_password(driver, matched_text, heading_elem):
+    """Find the StockCharts chartlist password near the matched section."""
+    # Try parent containers at various levels
+    for ancestor_level in range(1, 6):
+        try:
+            parent = heading_elem.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
+            section_text = parent.text or ""
+            match = re.search(r'\(password:\s*([A-Za-z0-9]+)\)', section_text)
+            if match:
+                password = match.group(1)
+                log(f"Found SC password '{password}' at ancestor level {ancestor_level}")
+                return password
+        except Exception:
+            continue
+
+    # Fallback: search page text near heading
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        idx = page_text.lower().find(matched_text.lower())
+        if idx >= 0:
+            nearby = page_text[idx:idx + 500]
+            match = re.search(r'\(password:\s*([A-Za-z0-9]+)\)', nearby)
+            if match:
+                log(f"Found SC password via page text search: {match.group(1)}")
+                return match.group(1)
+    except Exception:
+        pass
+
+    log(f"Could not find SC password for '{matched_text}'", "WARNING")
+    return None
+
+
+def _find_sc_url(driver, matched_text, heading_elem):
+    """Find the StockCharts shared chart URL near the matched section."""
+    mxs = xpath_string(matched_text)
+
+    # Strategy 1: Look for link containing "stockcharts" in href, after the heading
+    try:
+        links = driver.find_elements(
+            By.XPATH,
+            f"//*[contains(text(), {mxs})]/following::a[contains(@href, 'stockcharts')][1]"
+        )
+        if links:
+            url = links[0].get_attribute('href')
+            log(f"Found SC URL via following::a: {url}")
+            return url
+    except Exception:
+        pass
+
+    # Strategy 2: Look in parent containers
+    for ancestor_level in range(1, 6):
+        try:
+            parent = heading_elem.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
+            sc_links = parent.find_elements(By.XPATH, ".//a[contains(@href, 'stockcharts')]")
+            if sc_links:
+                url = sc_links[0].get_attribute('href')
+                log(f"Found SC URL in ancestor level {ancestor_level}: {url}")
+                return url
+        except Exception:
+            continue
+
+    # Strategy 3: Search all links on page near the section
+    try:
+        all_links = driver.find_elements(By.TAG_NAME, "a")
+        for link in all_links:
+            href = link.get_attribute('href') or ""
+            text = link.text or ""
+            if 'stockcharts' in href.lower() and 'stockcharts' in text.lower():
+                # Check proximity by looking if this link is near our heading text
+                try:
+                    parent = link.find_element(By.XPATH, "./ancestor::*[5]")
+                    if matched_text.lower() in (parent.text or "").lower():
+                        log(f"Found SC URL via proximity search: {href}")
+                        return href
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    log(f"Could not find SC URL for '{matched_text}'", "WARNING")
     return None
 
 
@@ -405,8 +494,8 @@ def main():
 
     result = {
         "success": False,
-        "leading_stocks": {"date_on_page": None, "is_new": False, "file_path": None},
-        "hot_stocks": {"date_on_page": None, "is_new": False, "file_path": None},
+        "leading_stocks": {"date_on_page": None, "is_new": False, "file_path": None, "sc_password": None, "sc_url": None},
+        "hot_stocks": {"date_on_page": None, "is_new": False, "file_path": None, "sc_password": None, "sc_url": None},
         "error": None,
     }
 
@@ -432,6 +521,8 @@ def main():
             "LSCL",
         ])
         result["leading_stocks"]["date_on_page"] = leading_info["update_date"]
+        result["leading_stocks"]["sc_password"] = leading_info.get("sc_password")
+        result["leading_stocks"]["sc_url"] = leading_info.get("sc_url")
 
         if leading_info["update_date"] and leading_info["update_date"] != args.leading_date:
             result["leading_stocks"]["is_new"] = True
@@ -467,6 +558,8 @@ def main():
             "Short Squeeze",
         ])
         result["hot_stocks"]["date_on_page"] = hot_info["update_date"]
+        result["hot_stocks"]["sc_password"] = hot_info.get("sc_password")
+        result["hot_stocks"]["sc_url"] = hot_info.get("sc_url")
 
         if hot_info["update_date"] and hot_info["update_date"] != args.hot_date:
             result["hot_stocks"]["is_new"] = True

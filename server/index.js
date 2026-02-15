@@ -16,12 +16,14 @@ const { router: analysisRouter } = require('./routes/analysis');
 const rankingsRouter = require('./routes/rankings');
 const portfoliosRouter = require('./routes/portfolios');
 const automationRouter = require('./routes/automation');
+const emaAnalysisRouter = require('./routes/ema-analysis');
 
 // API routes
 app.use('/api', analysisRouter);
 app.use('/api/rankings', rankingsRouter);
 app.use('/api/portfolios', portfoliosRouter);
 app.use('/api/automation', automationRouter);
+app.use('/api/ema-analysis', emaAnalysisRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -29,6 +31,8 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     apiKeySet: !!process.env.MASSIVE_STOCK_API_KEY,
     dbSet: !!process.env.DATABASE_URL,
+    geminiKeySet: !!process.env.GEMINI_API_KEY,
+    stockchartsSet: !!(process.env.STOCKCHARTS_EMAIL && process.env.STOCKCHARTS_PASSWORD),
   });
 });
 
@@ -108,6 +112,30 @@ async function start() {
             total_gain_loss_pct NUMERIC(8,4) NOT NULL,
             holdings_json TEXT,
             created_at TIMESTAMP DEFAULT NOW() NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS ema_scan_results (
+            id SERIAL PRIMARY KEY,
+            list_name VARCHAR(100) NOT NULL,
+            scan_date VARCHAR(10) NOT NULL,
+            chartlist_name TEXT,
+            stock_symbols TEXT NOT NULL,
+            stock_count INTEGER NOT NULL,
+            csv_path TEXT,
+            image_path TEXT,
+            scanned_at TIMESTAMP DEFAULT NOW() NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS ema_analysis (
+            id SERIAL PRIMARY KEY,
+            scan_result_id INTEGER NOT NULL,
+            list_name VARCHAR(100) NOT NULL,
+            analysis_date VARCHAR(10) NOT NULL,
+            category_summary TEXT NOT NULL,
+            stock_analysis TEXT NOT NULL,
+            raw_response TEXT,
+            portfolio_id INTEGER,
+            portfolio_status VARCHAR(20) DEFAULT 'none',
+            created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMP DEFAULT NOW() NOT NULL
           );
         `);
         console.log('Database tables ensured');
