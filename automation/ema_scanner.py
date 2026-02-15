@@ -442,12 +442,61 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
     except Exception:
         pass
 
-    # Enter scan criteria - try multiple approaches
+    # --- Primary approach (from StockScope): Load a saved scan to initialize the page ---
+    # Loading a saved scan from the dropdown properly initializes the ScanUI page,
+    # making the textarea accessible. Then we replace the criteria with our EMA scan.
+    log("Looking for YOUR SAVED SCANS dropdown to initialize page...")
+    saved_scan_loaded = False
+    driver.execute_script("window.scrollTo(0, 0);")
+    time.sleep(1)
+
+    try:
+        selects = driver.find_elements(By.TAG_NAME, "select")
+        log(f"Found {len(selects)} select elements on page")
+        scan_dropdown = None
+        for i, sel in enumerate(selects):
+            try:
+                if not sel.is_displayed():
+                    continue
+                options = Select(sel).options
+                for opt in options:
+                    opt_text = opt.text.lower()
+                    # Look for any saved scan to load (prefer "ema" or "leadership" scans)
+                    if any(kw in opt_text for kw in ["ema", "leadership", "weekly", "scan"]):
+                        scan_dropdown = sel
+                        log(f"Found saved scans dropdown (select #{i}) with option: {opt.text}")
+                        break
+                if scan_dropdown:
+                    break
+            except Exception:
+                continue
+
+        if scan_dropdown:
+            # Select the first matching saved scan to initialize the page
+            select_obj = Select(scan_dropdown)
+            selected_option = None
+            for opt in select_obj.options:
+                opt_text = opt.text.lower()
+                if any(kw in opt_text for kw in ["ema", "leadership", "weekly", "scan"]):
+                    selected_option = opt.text
+                    break
+            if selected_option:
+                select_obj.select_by_visible_text(selected_option)
+                time.sleep(3)
+                log(f"Loaded saved scan: {selected_option}")
+                saved_scan_loaded = True
+        else:
+            log("No saved scans dropdown found, will try direct textarea approach")
+    except Exception as e:
+        log(f"Error loading saved scan: {e}", "WARNING")
+
+    # Now enter the EMA scan criteria
     log("Entering 20-EMA scan criteria...")
     scan_textarea = None
     use_codemirror = False
 
-    # Approach 1: Try finding visible textarea by name
+    # After loading a saved scan, the textarea should be properly initialized
+    # Try finding it by name first
     try:
         scan_textarea = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "scantext"))
@@ -459,7 +508,7 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
     except Exception:
         log("scantext textarea not found by name")
 
-    # Approach 2: Try by ID
+    # Try by ID
     if not scan_textarea:
         try:
             scan_textarea = driver.find_element(By.ID, "scantext")
@@ -467,8 +516,7 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
         except Exception:
             pass
 
-    # Approach 3: Detect CodeMirror editor (common on StockCharts ScanUI)
-    # CodeMirror hides the original textarea and creates its own editable elements
+    # Detect CodeMirror editor (StockCharts ScanUI may use it)
     try:
         has_codemirror = driver.execute_script(
             "return document.querySelector('.CodeMirror') !== null;"
@@ -479,7 +527,7 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
     except Exception:
         pass
 
-    # Approach 4: Check inside iframes
+    # Check inside iframes
     if not scan_textarea and not use_codemirror:
         try:
             frames = driver.find_elements(By.TAG_NAME, "iframe")
@@ -496,17 +544,15 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
         except Exception:
             driver.switch_to.default_content()
 
-    # Approach 5: Use any textarea (visible or hidden) as fallback
+    # Fallback: use any textarea (visible or hidden)
     if not scan_textarea and not use_codemirror:
         try:
             textareas = driver.find_elements(By.TAG_NAME, "textarea")
-            # Prefer visible textareas
             for ta in textareas:
                 if ta.is_displayed():
                     scan_textarea = ta
                     log(f"Using first visible textarea: name={ta.get_attribute('name')}")
                     break
-            # If no visible textarea found, use first hidden one via JS
             if not scan_textarea and textareas:
                 scan_textarea = textareas[0]
                 log("Using first hidden textarea as fallback (will set via JS)")
@@ -515,11 +561,9 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
 
     if not scan_textarea and not use_codemirror:
         log("Could not find scan textarea on ScanUI page", "ERROR")
-        # Take debug screenshot
         debug_path = os.path.join(data_dir, f"{list_key}_scanui_debug.png")
         driver.save_screenshot(debug_path)
         log(f"Debug screenshot saved: {debug_path}")
-        # Save page source for debugging
         try:
             source_path = os.path.join(data_dir, f"{list_key}_scanui_debug.html")
             with open(source_path, 'w') as f:
@@ -539,13 +583,11 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
             log("Set scan criteria via CodeMirror API")
         except Exception as e:
             log(f"CodeMirror setValue failed: {e}", "WARNING")
-            # Fallback: try setting the hidden textarea value directly
             if scan_textarea:
                 driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
                 driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", scan_textarea)
                 log("Fell back to setting hidden textarea value via JS")
             else:
-                # Last resort: try setting any textarea on the page
                 try:
                     driver.execute_script("""
                         var ta = document.querySelector('textarea');
