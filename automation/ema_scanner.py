@@ -365,15 +365,40 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
 
     # Navigate to Advanced Scan Workbench
     driver.get("https://stockcharts.com/def/servlet/ScanUI")
-    time.sleep(5)
+    time.sleep(8)
 
     current_url = driver.current_url
     log(f"ScanUI URL: {current_url}")
+    log(f"ScanUI page title: {driver.title}")
 
     # Handle login redirect
     if "login" in current_url.lower():
-        log("Redirected to login from ScanUI", "WARNING")
-        return None
+        log("Redirected to login from ScanUI, attempting login...", "WARNING")
+        try:
+            email_field = driver.find_element(By.ID, "form_UserID")
+            email_field.clear()
+            email_field.send_keys(driver.sc_username if hasattr(driver, 'sc_username') else '')
+            pwd_field = driver.find_element(By.ID, "form_UserPassword")
+            pwd_field.clear()
+            pwd_field.send_keys(driver.sc_password if hasattr(driver, 'sc_password') else '')
+            login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+            driver.execute_script("arguments[0].click();", login_btn)
+            time.sleep(5)
+            # Navigate back to ScanUI after login
+            driver.get("https://stockcharts.com/def/servlet/ScanUI")
+            time.sleep(8)
+            log(f"Post-login ScanUI URL: {driver.current_url}")
+        except Exception as e:
+            log(f"Login from ScanUI failed: {e}", "ERROR")
+            return None
+
+    # Handle redirect to panels/dashboard
+    if "panels" in current_url or "dashboard" in current_url.lower():
+        log("Redirected to dashboard, re-navigating to ScanUI...")
+        driver.get("https://stockcharts.com/def/servlet/ScanUI")
+        time.sleep(8)
+        current_url = driver.current_url
+        log(f"Re-navigated ScanUI URL: {current_url}")
 
     # Dismiss any modal dialogs
     dismiss_overlays(driver)
@@ -391,21 +416,85 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
         """)
     except Exception:
         pass
-    time.sleep(2)
+    time.sleep(3)
+
+    # Log page elements for debugging
+    try:
+        textareas = driver.find_elements(By.TAG_NAME, "textarea")
+        log(f"Found {len(textareas)} textareas on page")
+        for i, ta in enumerate(textareas):
+            name = ta.get_attribute("name") or ""
+            id_ = ta.get_attribute("id") or ""
+            log(f"  textarea[{i}]: name='{name}', id='{id_}', visible={ta.is_displayed()}")
+
+        # Check for frames/iframes
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        log(f"Found {len(frames)} iframes on page")
+        for i, frame in enumerate(frames):
+            src = frame.get_attribute("src") or ""
+            log(f"  iframe[{i}]: src='{src}'")
+    except Exception:
+        pass
 
     # Enter scan criteria in textarea
     log("Entering 20-EMA scan criteria...")
+    scan_textarea = None
+
+    # Try finding textarea directly
     try:
-        scan_textarea = WebDriverWait(driver, 10).until(
+        scan_textarea = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.NAME, "scantext"))
         )
-        driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
-        # Also trigger change event so the UI recognizes the update
-        driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", scan_textarea)
-        log("Entered scan criteria")
-    except Exception as e:
-        log(f"Could not find/set scan textarea: {e}", "ERROR")
+    except Exception:
+        log("scantext textarea not found directly, checking iframes...")
+
+    # If not found, check inside iframes
+    if not scan_textarea:
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+            for frame in frames:
+                try:
+                    driver.switch_to.frame(frame)
+                    scan_textarea = driver.find_element(By.NAME, "scantext")
+                    if scan_textarea:
+                        log("Found scantext inside iframe")
+                        break
+                except Exception:
+                    driver.switch_to.default_content()
+                    continue
+        except Exception:
+            driver.switch_to.default_content()
+
+    # Try by ID as fallback
+    if not scan_textarea:
+        try:
+            scan_textarea = driver.find_element(By.ID, "scantext")
+        except Exception:
+            pass
+
+    # Try any textarea on page
+    if not scan_textarea:
+        try:
+            textareas = driver.find_elements(By.TAG_NAME, "textarea")
+            for ta in textareas:
+                if ta.is_displayed():
+                    scan_textarea = ta
+                    log(f"Using first visible textarea: name={ta.get_attribute('name')}")
+                    break
+        except Exception:
+            pass
+
+    if not scan_textarea:
+        log("Could not find scan textarea on ScanUI page", "ERROR")
+        # Take debug screenshot
+        debug_path = os.path.join(data_dir, f"{list_key}_scanui_debug.png")
+        driver.save_screenshot(debug_path)
+        log(f"Debug screenshot saved: {debug_path}")
         return None
+
+    driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
+    driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", scan_textarea)
+    log("Entered scan criteria")
 
     # Click "YOUR ACCOUNT" tab to access ChartLists
     log("Clicking YOUR ACCOUNT tab...")
