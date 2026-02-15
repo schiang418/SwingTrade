@@ -32,7 +32,7 @@ app.get('/api/health', (req, res) => {
     apiKeySet: !!process.env.MASSIVE_STOCK_API_KEY,
     dbSet: !!process.env.DATABASE_URL,
     geminiKeySet: !!process.env.GEMINI_API_KEY,
-    stockchartsSet: !!(process.env.STOCKCHARTS_EMAIL && process.env.STOCKCHARTS_PASSWORD),
+    stockchartsSet: !!(process.env.STOCKCHARTS_USERNAME && process.env.STOCKCHARTS_PASSWORD),
   });
 });
 

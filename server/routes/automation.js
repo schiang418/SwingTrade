@@ -61,17 +61,17 @@ router.post('/check-and-download', async (req, res) => {
 
     // Run EMA scanner if SC info is available
     let emaResult = null;
-    const scEmail = process.env.STOCKCHARTS_EMAIL;
+    const scUsername = process.env.STOCKCHARTS_USERNAME;
     const scPassword = process.env.STOCKCHARTS_PASSWORD;
     const leadingScUrl = result.leading_stocks.sc_url;
     const leadingScPwd = result.leading_stocks.sc_password;
     const hotScUrl = result.hot_stocks.sc_url;
     const hotScPwd = result.hot_stocks.sc_password;
 
-    if (scEmail && scPassword && (leadingScUrl || hotScUrl)) {
+    if (scUsername && scPassword && (leadingScUrl || hotScUrl)) {
       console.log('Running EMA scanner...');
       try {
-        emaResult = await runEmaScanner(scEmail, scPassword, leadingScUrl, leadingScPwd, hotScUrl, hotScPwd);
+        emaResult = await runEmaScanner(scUsername, scPassword, leadingScUrl, leadingScPwd, hotScUrl, hotScPwd);
 
         if (emaResult && emaResult.success) {
           // Process EMA results and run Gemini analysis
@@ -110,10 +110,10 @@ router.post('/check-and-download', async (req, res) => {
 // Trigger EMA scanner independently
 router.post('/run-ema-scanner', async (req, res) => {
   try {
-    const scEmail = process.env.STOCKCHARTS_EMAIL;
+    const scUsername = process.env.STOCKCHARTS_USERNAME;
     const scPassword = process.env.STOCKCHARTS_PASSWORD;
 
-    if (!scEmail || !scPassword) {
+    if (!scUsername || !scPassword) {
       return res.status(400).json({ error: 'StockCharts credentials not configured' });
     }
 
@@ -124,7 +124,7 @@ router.post('/run-ema-scanner', async (req, res) => {
     }
 
     const emaResult = await runEmaScanner(
-      scEmail, scPassword, leadingUrl, leadingPassword, hotUrl, hotPassword
+      scUsername, scPassword, leadingUrl, leadingPassword, hotUrl, hotPassword
     );
 
     if (!emaResult || !emaResult.success) {
@@ -211,14 +211,14 @@ function runAutomation(userid, password, leadingDate, hotDate) {
   });
 }
 
-function runEmaScanner(scEmail, scPassword, leadingUrl, leadingPwd, hotUrl, hotPwd) {
+function runEmaScanner(scUsername, scPassword, leadingUrl, leadingPwd, hotUrl, hotPwd) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '../../automation/ema_scanner.py');
     const dataDir = process.env.DATA_DIR || '/data';
 
     const args = [
       scriptPath,
-      '--sc-email', scEmail,
+      '--sc-username', scUsername,
       '--sc-password', scPassword,
       '--data-dir', dataDir,
     ];

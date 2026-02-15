@@ -5,7 +5,7 @@ download CSV results and CandleGlance screenshots.
 
 Usage:
   python ema_scanner.py \
-    --sc-email EMAIL --sc-password PASS \
+    --sc-username EMAIL --sc-password PASS \
     --leading-url URL --leading-password PASS \
     --hot-url URL --hot-password PASS \
     --data-dir /data
@@ -681,7 +681,7 @@ def _cleanup_windows(driver, keep_window):
 
 def main():
     parser = argparse.ArgumentParser(description="EMA Scanner automation for StockCharts")
-    parser.add_argument("--sc-email", required=True, help="StockCharts email")
+    parser.add_argument("--sc-username", required=True, help="StockCharts email")
     parser.add_argument("--sc-password", required=True, help="StockCharts password")
     parser.add_argument("--leading-url", default="", help="Leading Stocks shared chart URL")
     parser.add_argument("--leading-password", default="", help="Leading Stocks chartlist password")
@@ -740,7 +740,7 @@ def main():
             return
 
         # Step 2: Login to StockCharts
-        if not login_stockcharts(driver, args.sc_email, args.sc_password):
+        if not login_stockcharts(driver, args.sc_username, args.sc_password):
             result["error"] = "StockCharts login failed"
             print(json.dumps(result))
             return
