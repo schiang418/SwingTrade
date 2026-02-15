@@ -135,6 +135,15 @@ export async function triggerCheckAndDownload(): Promise<any> {
   return res.json();
 }
 
+export async function triggerForceAnalysis(): Promise<any> {
+  const res = await fetch(`${BASE}/automation/check-and-download?force=true`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || 'Force analysis failed');
+  }
+  return res.json();
+}
+
 export async function fetchAutomationStatus(): Promise<any[]> {
   const res = await fetch(`${BASE}/automation/status`);
   if (!res.ok) throw new Error('Failed to fetch status');
