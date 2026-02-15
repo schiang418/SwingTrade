@@ -216,16 +216,31 @@ def find_section_info(driver, heading_text, alt_texts=None):
     # Get update date from nearby context
     update_date = None
 
-    # Try parent containers at various levels
-    for ancestor_level in range(1, 5):
-        try:
-            parent = heading.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
-            section_text = parent.text or ""
-            update_date = parse_update_date(section_text)
+    # Strategy A (primary): Search page text starting from the heading position forward.
+    # This avoids picking up dates from earlier sections that share the same parent container.
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        heading_idx = page_text.lower().find(matched_text.lower())
+        if heading_idx >= 0:
+            # Search from heading position to next ~800 chars (one section)
+            section_forward = page_text[heading_idx:heading_idx + 800]
+            update_date = parse_update_date(section_forward)
             if update_date:
-                break
-        except Exception:
-            continue
+                log(f"Found date via page text forward search: {update_date}")
+    except Exception:
+        pass
+
+    # Strategy B (fallback): Try parent containers at various levels
+    if not update_date:
+        for ancestor_level in range(1, 5):
+            try:
+                parent = heading.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
+                section_text = parent.text or ""
+                update_date = parse_update_date(section_text)
+                if update_date:
+                    break
+            except Exception:
+                continue
 
     if not update_date:
         # Try following siblings/elements
@@ -257,7 +272,7 @@ def find_section_info(driver, heading_text, alt_texts=None):
 
     # Find the StockCharts password and URL near this section
     sc_password = _find_sc_password(driver, matched_text, heading)
-    sc_url = _find_sc_url(driver, matched_text, heading)
+    sc_url = _find_sc_url(driver, matched_text, heading, sc_password=sc_password)
 
     return {
         "update_date": update_date,
@@ -317,24 +332,66 @@ def _find_sc_password(driver, matched_text, heading_elem):
     return None
 
 
-def _find_sc_url(driver, matched_text, heading_elem):
-    """Find the StockCharts shared chart URL near the matched section."""
+def _find_sc_url(driver, matched_text, heading_elem, sc_password=None):
+    """Find the StockCharts shared chart URL near the matched section.
+    If sc_password is provided, prefer the link whose text contains that password."""
+
+    # Strategy 0 (best): If we have the password, find the <a> whose text contains it
+    if sc_password:
+        try:
+            pwd_links = driver.find_elements(
+                By.XPATH,
+                f"//a[contains(@href, 'stockcharts') and contains(., '{sc_password}')]"
+            )
+            if pwd_links:
+                url = pwd_links[0].get_attribute('href')
+                log(f"Found SC URL via password-matching link text: {url}")
+                return url
+        except Exception:
+            pass
+
+        # Also try finding the link just after the password text
+        try:
+            pwd_links = driver.find_elements(
+                By.XPATH,
+                f"//*[contains(text(), '{sc_password}')]/ancestor::a[contains(@href, 'stockcharts')]"
+            )
+            if pwd_links:
+                url = pwd_links[0].get_attribute('href')
+                log(f"Found SC URL via password ancestor link: {url}")
+                return url
+        except Exception:
+            pass
+
+        # Try the parent element containing the password text
+        try:
+            pwd_elems = driver.find_elements(
+                By.XPATH,
+                f"//*[contains(text(), '{sc_password}')]"
+            )
+            for pwd_elem in pwd_elems:
+                # Check if this element itself is a link
+                tag = pwd_elem.tag_name.lower()
+                if tag == 'a':
+                    url = pwd_elem.get_attribute('href')
+                    if url and 'stockcharts' in url.lower():
+                        log(f"Found SC URL from password element itself: {url}")
+                        return url
+                # Check parent
+                try:
+                    parent_link = pwd_elem.find_element(By.XPATH, "./ancestor::a")
+                    url = parent_link.get_attribute('href')
+                    if url and 'stockcharts' in url.lower():
+                        log(f"Found SC URL from password parent link: {url}")
+                        return url
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     mxs = xpath_string(matched_text)
 
-    # Strategy 1: Look for link containing "stockcharts" in href, after the heading
-    try:
-        links = driver.find_elements(
-            By.XPATH,
-            f"//*[contains(text(), {mxs})]/following::a[contains(@href, 'stockcharts')][1]"
-        )
-        if links:
-            url = links[0].get_attribute('href')
-            log(f"Found SC URL via following::a: {url}")
-            return url
-    except Exception:
-        pass
-
-    # Strategy 2: Look in parent containers
+    # Strategy 1: Look in parent containers (more reliable than following::a)
     for ancestor_level in range(1, 6):
         try:
             parent = heading_elem.find_element(By.XPATH, f"./ancestor::*[{ancestor_level}]")
@@ -346,21 +403,16 @@ def _find_sc_url(driver, matched_text, heading_elem):
         except Exception:
             continue
 
-    # Strategy 3: Search all links on page near the section
+    # Strategy 2: following::a from heading (less reliable, can pick wrong section)
     try:
-        all_links = driver.find_elements(By.TAG_NAME, "a")
-        for link in all_links:
-            href = link.get_attribute('href') or ""
-            text = link.text or ""
-            if 'stockcharts' in href.lower() and 'stockcharts' in text.lower():
-                # Check proximity by looking if this link is near our heading text
-                try:
-                    parent = link.find_element(By.XPATH, "./ancestor::*[5]")
-                    if matched_text.lower() in (parent.text or "").lower():
-                        log(f"Found SC URL via proximity search: {href}")
-                        return href
-                except Exception:
-                    continue
+        links = driver.find_elements(
+            By.XPATH,
+            f"//*[contains(text(), {mxs})]/following::a[contains(@href, 'stockcharts')][1]"
+        )
+        if links:
+            url = links[0].get_attribute('href')
+            log(f"Found SC URL via following::a: {url}")
+            return url
     except Exception:
         pass
 
