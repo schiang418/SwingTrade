@@ -168,13 +168,13 @@ async function start() {
       }
     });
 
-    // Schedule Monday auto-portfolio workflow at 5:30 PM Eastern (Mondays only)
+    // Schedule weekly auto-portfolio workflow at 5:30 PM Eastern (Monday + Tuesday fallback)
     // US market closes at 4:00 PM ET. This runs 1.5 hours after close.
+    // Runs Monday first; if both lists aren't available, retries Tuesday automatically.
     // Offset from the 5 PM price update to avoid Polygon API rate limit conflicts.
     // Also triggerable manually via POST /api/automation/monday-workflow
-    // or via Railway cron (POST https://<your-app>/api/automation/monday-workflow)
-    cron.schedule('30 22 * * 1', async () => {
-      console.log('Running Monday auto-portfolio workflow...');
+    cron.schedule('30 22 * * 1,2', async () => {
+      console.log('Running weekly auto-portfolio workflow...');
       try {
         const fetch = globalThis.fetch || (await import('node-fetch')).default;
         const response = await fetch(`http://localhost:${PORT}/api/automation/monday-workflow`, {
@@ -182,12 +182,12 @@ async function start() {
         });
         const result = await response.json();
         if (result.skipped) {
-          console.log('Monday workflow skipped:', result.message);
+          console.log('Weekly workflow skipped:', result.message);
         } else {
-          console.log(`Monday workflow complete. Portfolios created: ${result.portfoliosCreated?.length || 0}`);
+          console.log(`Weekly workflow complete. Portfolios created: ${result.portfoliosCreated?.length || 0}`);
         }
       } catch (err) {
-        console.error('Monday workflow failed:', err.message);
+        console.error('Weekly workflow failed:', err.message);
       }
     });
 

@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { eq, and } = require('drizzle-orm');
 const { getDb, getEasternDate } = require('../db');
-const { chartListUpdates, rankingResults, emaScanResults, emaAnalysis } = require('../schema');
+const { chartListUpdates, rankingResults, emaScanResults, emaAnalysis, portfolios: portfoliosTable } = require('../schema');
 const { parseExcelForTickers } = require('../../src/excel');
 const { runAnalysis } = require('./analysis');
 const { analyzeScanResults } = require('../gemini');
@@ -483,7 +483,36 @@ router.post('/monday-workflow', async (req, res) => {
     const db = getDb();
     const today = getEasternDate();
 
-    console.log(`[Monday Workflow] Starting for ${today}...`);
+    console.log(`[Weekly Workflow] Starting for ${today}...`);
+
+    // Step 0: If today is Tuesday, check if Monday already created portfolios (this is a fallback run)
+    const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const etDay = etNow.getDay(); // 0=Sun, 1=Mon, 2=Tue, ...
+
+    if (etDay === 2) {
+      // Compute Monday's Eastern date
+      const mondayTimestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const mondayStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(mondayTimestamp);
+
+      const mondayPortfolios = await db
+        .select()
+        .from(portfoliosTable)
+        .where(eq(portfoliosTable.purchaseDate, mondayStr));
+
+      if (mondayPortfolios.length > 0) {
+        const msg = `Tuesday fallback: Monday (${mondayStr}) already created ${mondayPortfolios.length} portfolios, skipping`;
+        console.log(`[Weekly Workflow] ${msg}`);
+        return res.json({ success: true, skipped: true, message: msg });
+      }
+      console.log(`[Weekly Workflow] Tuesday fallback: Monday (${mondayStr}) did not create portfolios, proceeding...`);
+    } else if (etDay !== 1) {
+      // Not Monday or Tuesday — skip (shouldn't happen via cron, but guard for manual calls)
+      console.log(`[Weekly Workflow] Today is not Monday or Tuesday (day=${etDay}), skipping`);
+      return res.json({ success: true, skipped: true, message: 'Only runs on Monday (or Tuesday as fallback)' });
+    }
 
     // Step 1: Check if both lists already have ranking results for today
     // (the daily 9:30 AM check may have already downloaded & analyzed them)
@@ -498,12 +527,12 @@ router.post('/monday-workflow', async (req, res) => {
 
     // If not both available, run check-and-download to try to get them
     if (!leadingRanking || !hotRanking) {
-      console.log('[Monday Workflow] Not both rankings available yet, running check-and-download...');
+      console.log('[Weekly Workflow] Not both rankings available yet, running check-and-download...');
       const checkRes = await fetchFn(`${baseUrl}/api/automation/check-and-download`, { method: 'POST' });
       const checkData = await checkRes.json();
 
       if (!checkData.success) {
-        console.error('[Monday Workflow] Check-and-download failed:', checkData.error);
+        console.error('[Weekly Workflow] Check-and-download failed:', checkData.error);
       }
 
       // Re-query after check-and-download
@@ -520,18 +549,18 @@ router.post('/monday-workflow', async (req, res) => {
     // Step 2: Verify both lists have today's ranking results
     if (!leadingRanking || !hotRanking) {
       const msg = `Not both lists have updates for ${today}. Leading: ${leadingRanking ? 'available' : 'missing'}, Hot: ${hotRanking ? 'available' : 'missing'}`;
-      console.log(`[Monday Workflow] ${msg}`);
+      console.log(`[Weekly Workflow] ${msg}`);
       return res.json({ success: true, skipped: true, message: msg });
     }
 
-    console.log('[Monday Workflow] Both lists have updates for today! Creating portfolios...');
+    console.log('[Weekly Workflow] Both lists have updates for today! Creating portfolios...');
 
     // Step 3: Create ranking-based portfolios for both lists (top 5 by score)
     const portfoliosCreated = [];
 
     for (const ranking of [leadingRanking, hotRanking]) {
       if (ranking.portfolioStatus === 'active') {
-        console.log(`[Monday Workflow] Ranking portfolio already exists for ${ranking.listName}, skipping`);
+        console.log(`[Weekly Workflow] Ranking portfolio already exists for ${ranking.listName}, skipping`);
         continue;
       }
       try {
@@ -542,13 +571,13 @@ router.post('/monday-workflow', async (req, res) => {
         });
         const portData = await portRes.json();
         if (portData.success) {
-          console.log(`[Monday Workflow] Created ranking portfolio for ${ranking.listName} (ID: ${portData.portfolio.id})`);
+          console.log(`[Weekly Workflow] Created ranking portfolio for ${ranking.listName} (ID: ${portData.portfolio.id})`);
           portfoliosCreated.push({ listName: ranking.listName, type: 'ranking', portfolioId: portData.portfolio.id });
         } else {
-          console.error(`[Monday Workflow] Failed to create ranking portfolio for ${ranking.listName}:`, portData.error);
+          console.error(`[Weekly Workflow] Failed to create ranking portfolio for ${ranking.listName}:`, portData.error);
         }
       } catch (err) {
-        console.error(`[Monday Workflow] Error creating ranking portfolio for ${ranking.listName}:`, err.message);
+        console.error(`[Weekly Workflow] Error creating ranking portfolio for ${ranking.listName}:`, err.message);
       }
     }
 
@@ -568,18 +597,18 @@ router.post('/monday-workflow', async (req, res) => {
           });
           const portData = await portRes.json();
           if (portData.success) {
-            console.log(`[Monday Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
+            console.log(`[Weekly Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
             portfoliosCreated.push({ listName, type: 'ema', portfolioId: portData.portfolio.id });
           } else {
-            console.error(`[Monday Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
+            console.error(`[Weekly Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
           }
         }
       } catch (err) {
-        console.error(`[Monday Workflow] Error creating EMA portfolio for ${listName}:`, err.message);
+        console.error(`[Weekly Workflow] Error creating EMA portfolio for ${listName}:`, err.message);
       }
     }
 
-    console.log(`[Monday Workflow] Complete. Created ${portfoliosCreated.length} portfolios.`);
+    console.log(`[Weekly Workflow] Complete. Created ${portfoliosCreated.length} portfolios.`);
 
     res.json({
       success: true,
@@ -588,7 +617,7 @@ router.post('/monday-workflow', async (req, res) => {
       portfoliosCreated,
     });
   } catch (err) {
-    console.error('[Monday Workflow] Error:', err);
+    console.error('[Weekly Workflow] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
