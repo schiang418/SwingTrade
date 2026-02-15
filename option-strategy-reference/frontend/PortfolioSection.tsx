@@ -1,0 +1,147 @@
+import React, { useState, useEffect } from 'react';
+import { TrendingUp, Loader2, Eye, Star } from 'lucide-react';
+import { createPortfolio, createEmaPortfolio, fetchEmaAnalysis } from '../api';
+import PortfolioDialog from './PortfolioDialog';
+
+interface Props {
+  rankingId: number;
+  portfolioId: number | null;
+  portfolioStatus: string;
+  listName: string;
+  analysisDate?: string;
+  onChange: () => void;
+  showToast: (msg: string, type?: 'success' | 'error') => void;
+}
+
+export default function PortfolioSection({
+  rankingId, portfolioId, portfolioStatus, listName, analysisDate, onChange, showToast,
+}: Props) {
+  const [creating, setCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [emaAnalysisId, setEmaAnalysisId] = useState<number | null>(null);
+
+  // Check if EMA analysis exists for this list/date
+  useEffect(() => {
+    (async () => {
+      try {
+        const ema = await fetchEmaAnalysis(listName, analysisDate);
+        if (ema?.found) {
+          setEmaAnalysisId(ema.id);
+        } else {
+          setEmaAnalysisId(null);
+        }
+      } catch {
+        setEmaAnalysisId(null);
+      }
+    })();
+  }, [listName, analysisDate]);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      // Create ranking portfolio
+      await createPortfolio(rankingId);
+
+      // Also create EMA portfolio if analysis exists
+      if (emaAnalysisId) {
+        try {
+          await createEmaPortfolio(emaAnalysisId);
+          showToast('Both Ranking and EMA portfolios created!');
+        } catch (emaErr: any) {
+          // EMA portfolio creation failed but ranking succeeded
+          showToast('Ranking portfolio created! EMA portfolio: ' + emaErr.message, 'error');
+        }
+      } else {
+        showToast('Portfolio created with top 5 stocks!');
+      }
+
+      onChange();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const buttonLabel = emaAnalysisId
+    ? 'Create Portfolios (Ranking + EMA)'
+    : 'Create Portfolio';
+
+  const buttonDescription = emaAnalysisId
+    ? 'Create virtual $100K portfolios: Ranking (top 5 by score) + EMA (top 5 by star rating)'
+    : 'Create a virtual $100K portfolio with the top 5 ranked stocks';
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-semibold text-[#8b8fa3] uppercase tracking-wide mb-3">
+        Model Portfolio
+      </h3>
+
+      {portfolioStatus === 'none' || !portfolioStatus ? (
+        <div className="bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-6 text-center">
+          <p className="text-[#8b8fa3] text-sm mb-3">
+            {buttonDescription}
+          </p>
+          <button
+            onClick={handleCreate}
+            disabled={creating}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700
+              text-white rounded-lg font-semibold text-sm transition-all disabled:opacity-50"
+          >
+            {creating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Creating {emaAnalysisId ? 'Portfolios' : 'Portfolio'}...
+              </>
+            ) : (
+              <>
+                <TrendingUp className="w-4 h-4" />
+                {buttonLabel}
+              </>
+            )}
+          </button>
+        </div>
+      ) : portfolioStatus === 'active' ? (
+        <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-green-400 font-semibold text-sm">Ranking Portfolio Active</span>
+          </div>
+          <button
+            onClick={() => setDialogOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#4f8ff7] hover:bg-[#3a7be0]
+              text-white rounded-lg font-semibold text-sm transition-all"
+          >
+            <Eye className="w-4 h-4" />
+            View Portfolio Details
+          </button>
+        </div>
+      ) : (
+        <div className="bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-3 h-3 bg-gray-500 rounded-full" />
+            <span className="text-[#8b8fa3] font-semibold text-sm">Portfolio Closed</span>
+          </div>
+          <button
+            onClick={() => setDialogOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#242836] hover:bg-[#2a2e3a]
+              text-white rounded-lg font-semibold text-sm transition-all"
+          >
+            <Eye className="w-4 h-4" />
+            View Results
+          </button>
+        </div>
+      )}
+
+      {/* Portfolio Dialog */}
+      {dialogOpen && portfolioId && (
+        <PortfolioDialog
+          portfolioId={portfolioId}
+          onClose={() => setDialogOpen(false)}
+          onChange={onChange}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
