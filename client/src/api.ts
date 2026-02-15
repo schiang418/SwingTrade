@@ -181,6 +181,7 @@ export interface EmaAnalysisData {
     stockCount: number;
     symbols: string[];
     chartlistName: string;
+    imageUrl: string | null;
   } | null;
 }
 
@@ -209,6 +210,34 @@ export async function createEmaPortfolio(emaAnalysisId: number): Promise<any> {
     const data = await res.json();
     throw new Error(data.error || 'Failed to create EMA portfolio');
   }
+  return res.json();
+}
+
+// Portfolio comparison types
+export interface ComparisonSnapshot {
+  date: string;
+  totalValue: number;
+  totalGainLoss: number;
+  totalGainLossPct: number;
+}
+
+export interface ComparisonPortfolio {
+  id: number;
+  listName: string;
+  status: string;
+  initialCapital: number;
+  currentValue: number;
+  totalGainLoss: number;
+  totalGainLossPct: number;
+  purchaseDate: string;
+  closeDate: string | null;
+  holdingDays: number;
+  snapshots: ComparisonSnapshot[];
+}
+
+export async function fetchPortfolioComparison(): Promise<ComparisonPortfolio[]> {
+  const res = await fetch(`${BASE}/portfolios/comparison`);
+  if (!res.ok) throw new Error('Failed to fetch portfolio comparison');
   return res.json();
 }
 

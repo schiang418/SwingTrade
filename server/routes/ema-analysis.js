@@ -44,6 +44,17 @@ router.get('/:listName', async (req, res) => {
       .from(emaScanResults)
       .where(eq(emaScanResults.id, analysis.scanResultId));
 
+    // Convert absolute image path to URL path
+    // e.g. /data/2026-02-15/leading_stocks_candleglance.png -> /api/scan-data/2026-02-15/leading_stocks_candleglance.png
+    const dataDir = process.env.DATA_DIR || '/data';
+    let imageUrl = null;
+    if (scanResult?.imagePath) {
+      const relativePath = scanResult.imagePath.startsWith(dataDir)
+        ? scanResult.imagePath.slice(dataDir.length)
+        : scanResult.imagePath;
+      imageUrl = `/api/scan-data${relativePath.startsWith('/') ? '' : '/'}${relativePath}`;
+    }
+
     res.json({
       found: true,
       id: analysis.id,
@@ -57,6 +68,7 @@ router.get('/:listName', async (req, res) => {
         stockCount: scanResult.stockCount,
         symbols: JSON.parse(scanResult.stockSymbols),
         chartlistName: scanResult.chartlistName,
+        imageUrl,
       } : null,
     });
   } catch (err) {

@@ -25,6 +25,10 @@ app.use('/api/portfolios', portfoliosRouter);
 app.use('/api/automation', automationRouter);
 app.use('/api/ema-analysis', emaAnalysisRouter);
 
+// Serve EMA scan data files (images, CSVs) from data directory
+const dataDir = process.env.DATA_DIR || '/data';
+app.use('/api/scan-data', express.static(dataDir));
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({
