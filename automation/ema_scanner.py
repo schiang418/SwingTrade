@@ -433,23 +433,102 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
         for i, frame in enumerate(frames):
             src = frame.get_attribute("src") or ""
             log(f"  iframe[{i}]: src='{src}'")
+
+        # Check for CodeMirror or other code editors
+        has_cm = driver.execute_script("return document.querySelector('.CodeMirror') !== null;")
+        has_ace = driver.execute_script("return document.querySelector('.ace_editor') !== null;")
+        has_monaco = driver.execute_script("return document.querySelector('.monaco-editor') !== null;")
+        log(f"Code editors detected - CodeMirror: {has_cm}, Ace: {has_ace}, Monaco: {has_monaco}")
     except Exception:
         pass
 
-    # Enter scan criteria in textarea
+    # --- Primary approach (from StockScope): Load "1 weekly leadership scan" to initialize the page ---
+    # Loading a saved scan from the dropdown properly initializes the ScanUI page,
+    # making the textarea accessible. Then we replace the criteria with our EMA scan.
+    log("Looking for YOUR SAVED SCANS dropdown to load '1 weekly leadership scan'...")
+    saved_scan_loaded = False
+    driver.execute_script("window.scrollTo(0, 0);")
+    time.sleep(1)
+
+    try:
+        selects = driver.find_elements(By.TAG_NAME, "select")
+        log(f"Found {len(selects)} select elements on page")
+        scan_dropdown = None
+        for i, sel in enumerate(selects):
+            try:
+                if not sel.is_displayed():
+                    continue
+                options = Select(sel).options
+                for opt in options:
+                    if "weekly leadership scan" in opt.text.lower():
+                        scan_dropdown = sel
+                        log(f"Found saved scans dropdown (select #{i}) with option: {opt.text}")
+                        break
+                if scan_dropdown:
+                    break
+            except Exception:
+                continue
+
+        if scan_dropdown:
+            select_obj = Select(scan_dropdown)
+            select_obj.select_by_visible_text("1 weekly leadership scan")
+            time.sleep(3)
+            log("Loaded saved scan: '1 weekly leadership scan'")
+            saved_scan_loaded = True
+        else:
+            log("No saved scans dropdown with '1 weekly leadership scan' found", "WARNING")
+            # Log available options for debugging
+            for i, sel in enumerate(selects):
+                try:
+                    if not sel.is_displayed():
+                        continue
+                    opts = Select(sel).options
+                    for o in opts[:5]:
+                        log(f"  select #{i} option: {o.text}")
+                except Exception:
+                    pass
+    except Exception as e:
+        log(f"Error loading saved scan: {e}", "WARNING")
+
+    # Now enter the EMA scan criteria
     log("Entering 20-EMA scan criteria...")
     scan_textarea = None
+    use_codemirror = False
 
-    # Try finding textarea directly
+    # After loading a saved scan, the textarea should be properly initialized
+    # Try finding it by name first
     try:
-        scan_textarea = WebDriverWait(driver, 15).until(
+        scan_textarea = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "scantext"))
         )
+        if scan_textarea.is_displayed():
+            log("Found visible scantext textarea by name")
+        else:
+            log("Found scantext textarea by name but it's hidden")
     except Exception:
-        log("scantext textarea not found directly, checking iframes...")
+        log("scantext textarea not found by name")
 
-    # If not found, check inside iframes
+    # Try by ID
     if not scan_textarea:
+        try:
+            scan_textarea = driver.find_element(By.ID, "scantext")
+            log(f"Found scantext by ID, visible={scan_textarea.is_displayed()}")
+        except Exception:
+            pass
+
+    # Detect CodeMirror editor (StockCharts ScanUI may use it)
+    try:
+        has_codemirror = driver.execute_script(
+            "return document.querySelector('.CodeMirror') !== null;"
+        )
+        if has_codemirror:
+            log("Detected CodeMirror editor on page - will use CodeMirror API")
+            use_codemirror = True
+    except Exception:
+        pass
+
+    # Check inside iframes
+    if not scan_textarea and not use_codemirror:
         try:
             frames = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in frames:
@@ -465,15 +544,8 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
         except Exception:
             driver.switch_to.default_content()
 
-    # Try by ID as fallback
-    if not scan_textarea:
-        try:
-            scan_textarea = driver.find_element(By.ID, "scantext")
-        except Exception:
-            pass
-
-    # Try any textarea on page
-    if not scan_textarea:
+    # Fallback: use any textarea (visible or hidden)
+    if not scan_textarea and not use_codemirror:
         try:
             textareas = driver.find_elements(By.TAG_NAME, "textarea")
             for ta in textareas:
@@ -481,20 +553,57 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
                     scan_textarea = ta
                     log(f"Using first visible textarea: name={ta.get_attribute('name')}")
                     break
+            if not scan_textarea and textareas:
+                scan_textarea = textareas[0]
+                log("Using first hidden textarea as fallback (will set via JS)")
         except Exception:
             pass
 
-    if not scan_textarea:
+    if not scan_textarea and not use_codemirror:
         log("Could not find scan textarea on ScanUI page", "ERROR")
-        # Take debug screenshot
         debug_path = os.path.join(data_dir, f"{list_key}_scanui_debug.png")
         driver.save_screenshot(debug_path)
         log(f"Debug screenshot saved: {debug_path}")
+        try:
+            source_path = os.path.join(data_dir, f"{list_key}_scanui_debug.html")
+            with open(source_path, 'w') as f:
+                f.write(driver.page_source)
+            log(f"Page source saved: {source_path}")
+        except Exception:
+            pass
         return None
 
-    driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
-    driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", scan_textarea)
-    log("Entered scan criteria")
+    # Set the scan criteria using the appropriate method
+    if use_codemirror:
+        try:
+            driver.execute_script(
+                "document.querySelector('.CodeMirror').CodeMirror.setValue(arguments[0]);",
+                EMA_SCAN_CRITERIA
+            )
+            log("Set scan criteria via CodeMirror API")
+        except Exception as e:
+            log(f"CodeMirror setValue failed: {e}", "WARNING")
+            if scan_textarea:
+                driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", scan_textarea)
+                log("Fell back to setting hidden textarea value via JS")
+            else:
+                try:
+                    driver.execute_script("""
+                        var ta = document.querySelector('textarea');
+                        if (ta) {
+                            ta.value = arguments[0];
+                            ta.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                    """, EMA_SCAN_CRITERIA)
+                    log("Set scan criteria via first textarea found in DOM")
+                except Exception as e2:
+                    log(f"All textarea approaches failed: {e2}", "ERROR")
+                    return None
+    else:
+        driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, EMA_SCAN_CRITERIA)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", scan_textarea)
+        log("Entered scan criteria via textarea")
 
     # Click "YOUR ACCOUNT" tab to access ChartLists
     log("Clicking YOUR ACCOUNT tab...")
@@ -586,10 +695,38 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
             list_match = re.search(r'list #(\d+)', chartlist_option_text)
             if list_match:
                 list_id = list_match.group(1)
-                scan_textarea = driver.find_element(By.NAME, "scantext")
-                current = scan_textarea.get_attribute("value")
-                new_criteria = f"{current}\nAND [CHARTLIST IS ${list_id}]"
-                driver.execute_script("arguments[0].value = arguments[1];", scan_textarea, new_criteria)
+                constraint = f"\nAND [CHARTLIST IS ${list_id}]"
+                if use_codemirror:
+                    try:
+                        current = driver.execute_script(
+                            "return document.querySelector('.CodeMirror').CodeMirror.getValue();"
+                        )
+                        new_criteria = current + constraint
+                        driver.execute_script(
+                            "document.querySelector('.CodeMirror').CodeMirror.setValue(arguments[0]);",
+                            new_criteria
+                        )
+                        log(f"Appended chartlist constraint via CodeMirror: AND [CHARTLIST IS ${list_id}]")
+                    except Exception as cm_err:
+                        log(f"CodeMirror append failed: {cm_err}, trying textarea fallback", "WARNING")
+                        try:
+                            ta = driver.find_element(By.TAG_NAME, "textarea")
+                            current = ta.get_attribute("value") or driver.execute_script("return arguments[0].value;", ta)
+                            new_criteria = (current or EMA_SCAN_CRITERIA) + constraint
+                            driver.execute_script("arguments[0].value = arguments[1];", ta, new_criteria)
+                            driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", ta)
+                        except Exception:
+                            log("Could not append chartlist constraint", "ERROR")
+                            return None
+                else:
+                    try:
+                        scan_ta = driver.find_element(By.NAME, "scantext")
+                    except NoSuchElementException:
+                        scan_ta = driver.find_element(By.TAG_NAME, "textarea")
+                    current = scan_ta.get_attribute("value") or driver.execute_script("return arguments[0].value;", scan_ta)
+                    new_criteria = (current or EMA_SCAN_CRITERIA) + constraint
+                    driver.execute_script("arguments[0].value = arguments[1];", scan_ta, new_criteria)
+                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", scan_ta)
                 log(f"Appended chartlist constraint: AND [CHARTLIST IS ${list_id}]")
             else:
                 log("Could not extract list ID from option text", "ERROR")
