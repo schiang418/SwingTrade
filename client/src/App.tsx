@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ChevronLeft, ChevronRight, RefreshCw, Download, Upload, TrendingUp, Loader2,
+  BarChart3,
 } from 'lucide-react';
 import {
   fetchRanking, fetchDates, triggerCheckAndDownload, triggerForceAnalysis,
@@ -10,6 +11,7 @@ import RankingTable from './components/RankingTable';
 import PortfolioSection from './components/PortfolioSection';
 import EmaAnalysisSection from './components/EmaAnalysisSection';
 import StockDetailModal from './components/StockDetailModal';
+import PerformanceComparison from './components/PerformanceComparison';
 import type { StockResult } from './api';
 
 type ListName = 'leading_stocks' | 'hot_stocks';
@@ -30,6 +32,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedStock, setSelectedStock] = useState<StockResult | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [showComparison, setShowComparison] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -213,6 +216,17 @@ export default function App() {
           )}
           {forceLoading ? 'Analyzing...' : 'Force Analysis'}
         </button>
+
+        {/* Compare Performance */}
+        <button
+          onClick={() => setShowComparison(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+            border border-purple-500/30 rounded-lg text-sm font-medium transition-all
+            text-purple-400 hover:text-purple-300"
+        >
+          <BarChart3 className="w-4 h-4" />
+          Compare Performance
+        </button>
       </div>
 
       {/* Date Navigation */}
@@ -333,6 +347,11 @@ export default function App() {
           stock={selectedStock}
           onClose={() => setSelectedStock(null)}
         />
+      )}
+
+      {/* Performance Comparison Modal */}
+      {showComparison && (
+        <PerformanceComparison onClose={() => setShowComparison(false)} />
       )}
     </div>
   );
