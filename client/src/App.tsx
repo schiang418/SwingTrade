@@ -8,6 +8,7 @@ import {
 } from './api';
 import RankingTable from './components/RankingTable';
 import PortfolioSection from './components/PortfolioSection';
+import EmaAnalysisSection from './components/EmaAnalysisSection';
 import StockDetailModal from './components/StockDetailModal';
 import type { StockResult } from './api';
 
@@ -266,6 +267,8 @@ export default function App() {
             rankingId={ranking.id}
             portfolioId={ranking.portfolioId}
             portfolioStatus={ranking.portfolioStatus}
+            listName={activeTab}
+            analysisDate={currentDate?.analysisDate}
             onChange={handlePortfolioChange}
             showToast={showToast}
           />
@@ -274,6 +277,14 @@ export default function App() {
           <RankingTable
             results={ranking.results}
             onSelectStock={setSelectedStock}
+          />
+
+          {/* EMA Analysis Section */}
+          <EmaAnalysisSection
+            listName={activeTab}
+            analysisDate={currentDate?.analysisDate}
+            showToast={showToast}
+            onPortfolioChange={handlePortfolioChange}
           />
         </>
       )}

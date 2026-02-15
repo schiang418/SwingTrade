@@ -60,10 +60,38 @@ const portfolioSnapshots = pgTable('portfolio_snapshots', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+const emaScanResults = pgTable('ema_scan_results', {
+  id: serial('id').primaryKey(),
+  listName: varchar('list_name', { length: 100 }).notNull(),
+  scanDate: varchar('scan_date', { length: 10 }).notNull(),
+  chartlistName: text('chartlist_name'),
+  stockSymbols: text('stock_symbols').notNull(), // JSON array of symbols
+  stockCount: integer('stock_count').notNull(),
+  csvPath: text('csv_path'),
+  imagePath: text('image_path'),
+  scannedAt: timestamp('scanned_at').defaultNow().notNull(),
+});
+
+const emaAnalysis = pgTable('ema_analysis', {
+  id: serial('id').primaryKey(),
+  scanResultId: integer('scan_result_id').notNull(),
+  listName: varchar('list_name', { length: 100 }).notNull(),
+  analysisDate: varchar('analysis_date', { length: 10 }).notNull(),
+  categorySummary: text('category_summary').notNull(), // JSON
+  stockAnalysis: text('stock_analysis').notNull(), // JSON
+  rawResponse: text('raw_response'),
+  portfolioId: integer('portfolio_id'),
+  portfolioStatus: varchar('portfolio_status', { length: 20 }).default('none'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 module.exports = {
   chartListUpdates,
   rankingResults,
   portfolios,
   portfolioHoldings,
   portfolioSnapshots,
+  emaScanResults,
+  emaAnalysis,
 };
