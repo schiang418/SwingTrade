@@ -442,10 +442,10 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
     except Exception:
         pass
 
-    # --- Primary approach (from StockScope): Load a saved scan to initialize the page ---
+    # --- Primary approach (from StockScope): Load "1 weekly leadership scan" to initialize the page ---
     # Loading a saved scan from the dropdown properly initializes the ScanUI page,
     # making the textarea accessible. Then we replace the criteria with our EMA scan.
-    log("Looking for YOUR SAVED SCANS dropdown to initialize page...")
+    log("Looking for YOUR SAVED SCANS dropdown to load '1 weekly leadership scan'...")
     saved_scan_loaded = False
     driver.execute_script("window.scrollTo(0, 0);")
     time.sleep(1)
@@ -460,9 +460,7 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
                     continue
                 options = Select(sel).options
                 for opt in options:
-                    opt_text = opt.text.lower()
-                    # Look for any saved scan to load (prefer "ema" or "leadership" scans)
-                    if any(kw in opt_text for kw in ["ema", "leadership", "weekly", "scan"]):
+                    if "weekly leadership scan" in opt.text.lower():
                         scan_dropdown = sel
                         log(f"Found saved scans dropdown (select #{i}) with option: {opt.text}")
                         break
@@ -472,21 +470,23 @@ def run_ema_scan(driver, chartlist_name, list_key, download_dir, data_dir):
                 continue
 
         if scan_dropdown:
-            # Select the first matching saved scan to initialize the page
             select_obj = Select(scan_dropdown)
-            selected_option = None
-            for opt in select_obj.options:
-                opt_text = opt.text.lower()
-                if any(kw in opt_text for kw in ["ema", "leadership", "weekly", "scan"]):
-                    selected_option = opt.text
-                    break
-            if selected_option:
-                select_obj.select_by_visible_text(selected_option)
-                time.sleep(3)
-                log(f"Loaded saved scan: {selected_option}")
-                saved_scan_loaded = True
+            select_obj.select_by_visible_text("1 weekly leadership scan")
+            time.sleep(3)
+            log("Loaded saved scan: '1 weekly leadership scan'")
+            saved_scan_loaded = True
         else:
-            log("No saved scans dropdown found, will try direct textarea approach")
+            log("No saved scans dropdown with '1 weekly leadership scan' found", "WARNING")
+            # Log available options for debugging
+            for i, sel in enumerate(selects):
+                try:
+                    if not sel.is_displayed():
+                        continue
+                    opts = Select(sel).options
+                    for o in opts[:5]:
+                        log(f"  select #{i} option: {o.text}")
+                except Exception:
+                    pass
     except Exception as e:
         log(f"Error loading saved scan: {e}", "WARNING")
 
