@@ -1,7 +1,7 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
-const { eq, and } = require('drizzle-orm');
+const { eq, and, desc, ne } = require('drizzle-orm');
 const { getDb, getEasternDate } = require('../db');
 const { chartListUpdates, rankingResults, emaScanResults, emaAnalysis, portfolios: portfoliosTable } = require('../schema');
 const { parseExcelForTickers } = require('../../src/excel');
@@ -519,55 +519,40 @@ router.post('/monday-workflow', async (req, res) => {
       console.log(`[Weekly Workflow] Fallback: first trading day (${firstTradingDay}) did not create portfolios, proceeding...`);
     }
 
-    // Step 1: Check if both lists already have ranking results for today
-    // (the daily 9:30 AM check may have already downloaded & analyzed them)
-    let [leadingRanking] = await db
-      .select()
-      .from(rankingResults)
-      .where(and(eq(rankingResults.listName, 'leading_stocks'), eq(rankingResults.analysisDate, today)));
-    let [hotRanking] = await db
-      .select()
-      .from(rankingResults)
-      .where(and(eq(rankingResults.listName, 'hot_stocks'), eq(rankingResults.analysisDate, today)));
-
-    // If not both available, run check-and-download to try to get them
-    if (!leadingRanking || !hotRanking) {
-      console.log('[Weekly Workflow] Not both rankings available yet, running check-and-download...');
+    // Step 1: Try check-and-download to get any new lists
+    console.log('[Weekly Workflow] Running check-and-download...');
+    try {
       const checkRes = await fetchFn(`${baseUrl}/api/automation/check-and-download`, { method: 'POST' });
       const checkData = await checkRes.json();
-
       if (!checkData.success) {
         console.error('[Weekly Workflow] Check-and-download failed:', checkData.error);
       }
-
-      // Re-query after check-and-download
-      [leadingRanking] = await db
-        .select()
-        .from(rankingResults)
-        .where(and(eq(rankingResults.listName, 'leading_stocks'), eq(rankingResults.analysisDate, today)));
-      [hotRanking] = await db
-        .select()
-        .from(rankingResults)
-        .where(and(eq(rankingResults.listName, 'hot_stocks'), eq(rankingResults.analysisDate, today)));
+    } catch (err) {
+      console.error('[Weekly Workflow] Check-and-download error:', err.message);
     }
 
-    // Step 2: Verify both lists have today's ranking results
-    if (!leadingRanking || !hotRanking) {
-      const msg = `Not both lists have updates for ${today}. Leading: ${leadingRanking ? 'available' : 'missing'}, Hot: ${hotRanking ? 'available' : 'missing'}`;
-      console.log(`[Weekly Workflow] ${msg}`);
-      return res.json({ success: true, skipped: true, message: msg });
-    }
-
-    console.log('[Weekly Workflow] Both lists have updates for today! Creating portfolios...');
-
-    // Step 3: Create ranking-based portfolios for both lists (top 5 by score)
+    // Step 2: Find the most recent ranking for each list that doesn't have a portfolio yet
+    // Lists may be updated on different dates — that's OK, create portfolios independently
     const portfoliosCreated = [];
 
-    for (const ranking of [leadingRanking, hotRanking]) {
-      if (ranking.portfolioStatus === 'active') {
-        console.log(`[Weekly Workflow] Ranking portfolio already exists for ${ranking.listName}, skipping`);
+    for (const listName of ['leading_stocks', 'hot_stocks']) {
+      const [ranking] = await db
+        .select()
+        .from(rankingResults)
+        .where(and(
+          eq(rankingResults.listName, listName),
+          ne(rankingResults.portfolioStatus, 'active')
+        ))
+        .orderBy(desc(rankingResults.analysisDate))
+        .limit(1);
+
+      if (!ranking) {
+        console.log(`[Weekly Workflow] No pending ranking found for ${listName}, skipping`);
         continue;
       }
+
+      console.log(`[Weekly Workflow] Found pending ranking for ${listName} (analysisDate: ${ranking.analysisDate}), creating portfolio...`);
+
       try {
         const portRes = await fetchFn(`${baseUrl}/api/portfolios`, {
           method: 'POST',
@@ -576,37 +561,47 @@ router.post('/monday-workflow', async (req, res) => {
         });
         const portData = await portRes.json();
         if (portData.success) {
-          console.log(`[Weekly Workflow] Created ranking portfolio for ${ranking.listName} (ID: ${portData.portfolio.id})`);
-          portfoliosCreated.push({ listName: ranking.listName, type: 'ranking', portfolioId: portData.portfolio.id });
+          console.log(`[Weekly Workflow] Created ranking portfolio for ${listName} (ID: ${portData.portfolio.id})`);
+          portfoliosCreated.push({ listName, type: 'ranking', portfolioId: portData.portfolio.id });
         } else {
-          console.error(`[Weekly Workflow] Failed to create ranking portfolio for ${ranking.listName}:`, portData.error);
+          console.error(`[Weekly Workflow] Failed to create ranking portfolio for ${listName}:`, portData.error);
         }
       } catch (err) {
-        console.error(`[Weekly Workflow] Error creating ranking portfolio for ${ranking.listName}:`, err.message);
+        console.error(`[Weekly Workflow] Error creating ranking portfolio for ${listName}:`, err.message);
       }
     }
 
-    // Step 4: Create EMA portfolios (top 5 by AI star rating) if analyses exist for today
+    // Step 3: Create EMA portfolios — same approach, find most recent without a portfolio
     for (const listName of ['leading_stocks', 'hot_stocks']) {
       try {
         const [analysis] = await db
           .select()
           .from(emaAnalysis)
-          .where(and(eq(emaAnalysis.listName, listName), eq(emaAnalysis.analysisDate, today)));
+          .where(and(
+            eq(emaAnalysis.listName, listName),
+            ne(emaAnalysis.portfolioStatus, 'active')
+          ))
+          .orderBy(desc(emaAnalysis.analysisDate))
+          .limit(1);
 
-        if (analysis && analysis.portfolioStatus !== 'active') {
-          const portRes = await fetchFn(`${baseUrl}/api/portfolios/ema`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ emaAnalysisId: analysis.id }),
-          });
-          const portData = await portRes.json();
-          if (portData.success) {
-            console.log(`[Weekly Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
-            portfoliosCreated.push({ listName, type: 'ema', portfolioId: portData.portfolio.id });
-          } else {
-            console.error(`[Weekly Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
-          }
+        if (!analysis) {
+          console.log(`[Weekly Workflow] No pending EMA analysis for ${listName}, skipping`);
+          continue;
+        }
+
+        console.log(`[Weekly Workflow] Found pending EMA analysis for ${listName} (analysisDate: ${analysis.analysisDate}), creating portfolio...`);
+
+        const portRes = await fetchFn(`${baseUrl}/api/portfolios/ema`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emaAnalysisId: analysis.id }),
+        });
+        const portData = await portRes.json();
+        if (portData.success) {
+          console.log(`[Weekly Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
+          portfoliosCreated.push({ listName, type: 'ema', portfolioId: portData.portfolio.id });
+        } else {
+          console.error(`[Weekly Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
         }
       } catch (err) {
         console.error(`[Weekly Workflow] Error creating EMA portfolio for ${listName}:`, err.message);
@@ -617,7 +612,8 @@ router.post('/monday-workflow', async (req, res) => {
 
     res.json({
       success: true,
-      skipped: false,
+      skipped: portfoliosCreated.length === 0,
+      message: portfoliosCreated.length === 0 ? 'No pending rankings or analyses found to create portfolios from' : undefined,
       date: today,
       portfoliosCreated,
     });
