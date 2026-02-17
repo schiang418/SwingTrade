@@ -158,10 +158,10 @@ async function start() {
     // scheduleEastern() converts Eastern times to UTC and auto-reschedules on DST transitions.
     // Each handler skips execution on market holidays.
 
-    // Daily workflow at 10:00 AM Eastern (Mon-Fri, trading days only)
-    // Checks for new list updates, downloads & analyzes if found, creates
-    // portfolios for any pending rankings/EMA analyses. Each list is independent.
-    scheduleEastern(cron, 10, 0, '1-5', async () => {
+    // Daily workflow at 10:00 AM Eastern (Mon-Tue only, skips holidays)
+    // Lists are typically updated on Monday or Tuesday. Each list is independent:
+    // check for new updates → download & analyze → create portfolios.
+    scheduleEastern(cron, 10, 0, '1-2', async () => {
       if (!isTradingDayToday()) {
         console.log('Skipping daily workflow: market is closed today (holiday)');
         return;
@@ -177,7 +177,7 @@ async function start() {
       } catch (err) {
         console.error('Daily workflow failed:', err.message);
       }
-    }, 'Daily workflow (10:00 AM ET)');
+    }, 'Daily workflow (10:00 AM ET, Mon-Tue)');
 
     // Daily price update at 5:00 PM Eastern (Mon-Fri, trading days only)
     scheduleEastern(cron, 17, 0, '1-5', async () => {
