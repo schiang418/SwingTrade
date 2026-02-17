@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const cron = require('node-cron');
 const { getDb } = require('./db');
+const { isTradingDayToday, scheduleEastern } = require('./trading-calendar');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -153,9 +154,16 @@ async function start() {
       console.log(`Swing Trade Ranking server running on port ${PORT}`);
     });
 
-    // Schedule daily check at 9:30 AM Eastern (Mon-Fri)
-    // Railway uses UTC, 9:30 AM ET = 14:30 UTC (EST) or 13:30 UTC (EDT)
-    cron.schedule('30 14 * * 1-5', async () => {
+    // ----- DST-aware, trading-day-guarded cron schedules -----
+    // scheduleEastern() converts Eastern times to UTC and auto-reschedules on DST transitions.
+    // Each handler skips execution on market holidays.
+
+    // Daily check at 9:30 AM Eastern (Mon-Fri, trading days only)
+    scheduleEastern(cron, 9, 30, '1-5', async () => {
+      if (!isTradingDayToday()) {
+        console.log('Skipping scheduled check-and-download: market is closed today (holiday)');
+        return;
+      }
       console.log('Running scheduled check-and-download...');
       try {
         const fetch = globalThis.fetch || (await import('node-fetch')).default;
@@ -166,14 +174,16 @@ async function start() {
       } catch (err) {
         console.error('Scheduled check failed:', err.message);
       }
-    });
+    }, 'Daily check-and-download (9:30 AM ET)');
 
-    // Schedule weekly auto-portfolio workflow at 5:30 PM Eastern (Monday + Tuesday fallback)
-    // US market closes at 4:00 PM ET. This runs 1.5 hours after close.
-    // Runs Monday first; if both lists aren't available, retries Tuesday automatically.
-    // Offset from the 5 PM price update to avoid Polygon API rate limit conflicts.
-    // Also triggerable manually via POST /api/automation/monday-workflow
-    cron.schedule('30 22 * * 1,2', async () => {
+    // Weekly auto-portfolio workflow at 5:30 PM Eastern (Mon-Fri, trading days only)
+    // Fires every weekday but the route handler only proceeds on the 1st or 2nd
+    // trading day of the week, replacing the old Mon+Tue hardcoded schedule.
+    scheduleEastern(cron, 17, 30, '1-5', async () => {
+      if (!isTradingDayToday()) {
+        console.log('Skipping weekly workflow: market is closed today (holiday)');
+        return;
+      }
       console.log('Running weekly auto-portfolio workflow...');
       try {
         const fetch = globalThis.fetch || (await import('node-fetch')).default;
@@ -189,10 +199,14 @@ async function start() {
       } catch (err) {
         console.error('Weekly workflow failed:', err.message);
       }
-    });
+    }, 'Weekly portfolio workflow (5:30 PM ET)');
 
-    // Schedule daily price update at 5 PM Eastern (Mon-Fri)
-    cron.schedule('0 22 * * 1-5', async () => {
+    // Daily price update at 5:00 PM Eastern (Mon-Fri, trading days only)
+    scheduleEastern(cron, 17, 0, '1-5', async () => {
+      if (!isTradingDayToday()) {
+        console.log('Skipping scheduled price update: market is closed today (holiday)');
+        return;
+      }
       console.log('Running scheduled price update...');
       try {
         const db = getDb();
@@ -217,7 +231,7 @@ async function start() {
       } catch (err) {
         console.error('Scheduled price update failed:', err.message);
       }
-    });
+    }, 'Daily price update (5:00 PM ET)');
 
   } catch (err) {
     console.error('Failed to start server:', err);

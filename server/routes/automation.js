@@ -8,6 +8,8 @@ const { parseExcelForTickers } = require('../../src/excel');
 const { runAnalysis } = require('./analysis');
 const { analyzeScanResults } = require('../gemini');
 
+const { isTradingDayToday, getTradingDayOfWeek, getFirstTradingDayOfWeek, getEasternDateStr } = require('../trading-calendar');
+
 const router = express.Router();
 
 // Trigger check and download (Excel + EMA scanner)
@@ -471,9 +473,11 @@ async function processEmaResults(db, listName, scanData, today) {
   }
 }
 
-// Monday auto-portfolio workflow
+// Weekly auto-portfolio workflow
 // Checks if both lists were updated today, runs analysis if needed, and creates portfolios automatically.
-// Can be triggered manually via POST or automatically via cron (node-cron / Railway cron).
+// Runs on the 1st trading day of the week, with a fallback on the 2nd trading day.
+// Properly skips market holidays (no hardcoded Mon/Tue assumption).
+// Can be triggered manually via POST or automatically via cron.
 router.post('/monday-workflow', async (req, res) => {
   const PORT = process.env.PORT || 3000;
   const baseUrl = `http://localhost:${PORT}`;
@@ -485,33 +489,34 @@ router.post('/monday-workflow', async (req, res) => {
 
     console.log(`[Weekly Workflow] Starting for ${today}...`);
 
-    // Step 0: If today is Tuesday, check if Monday already created portfolios (this is a fallback run)
-    const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const etDay = etNow.getDay(); // 0=Sun, 1=Mon, 2=Tue, ...
+    // Step 0: Determine where today falls within this week's trading days
+    if (!isTradingDayToday()) {
+      console.log(`[Weekly Workflow] Today (${today}) is not a trading day, skipping`);
+      return res.json({ success: true, skipped: true, message: 'Market is closed today (holiday or weekend)' });
+    }
 
-    if (etDay === 2) {
-      // Compute Monday's Eastern date
-      const mondayTimestamp = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const mondayStr = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/New_York',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-      }).format(mondayTimestamp);
+    const tradingDayNum = getTradingDayOfWeek(today);
 
-      const mondayPortfolios = await db
+    if (tradingDayNum > 2) {
+      console.log(`[Weekly Workflow] Today is trading day #${tradingDayNum} of the week, skipping (only runs on 1st or 2nd)`);
+      return res.json({ success: true, skipped: true, message: 'Only runs on the first two trading days of the week' });
+    }
+
+    // If this is the 2nd trading day, check whether the 1st already created portfolios
+    if (tradingDayNum === 2) {
+      const firstTradingDay = getFirstTradingDayOfWeek(today);
+
+      const firstDayPortfolios = await db
         .select()
         .from(portfoliosTable)
-        .where(eq(portfoliosTable.purchaseDate, mondayStr));
+        .where(eq(portfoliosTable.purchaseDate, firstTradingDay));
 
-      if (mondayPortfolios.length > 0) {
-        const msg = `Tuesday fallback: Monday (${mondayStr}) already created ${mondayPortfolios.length} portfolios, skipping`;
+      if (firstDayPortfolios.length > 0) {
+        const msg = `Fallback check: first trading day (${firstTradingDay}) already created ${firstDayPortfolios.length} portfolios, skipping`;
         console.log(`[Weekly Workflow] ${msg}`);
         return res.json({ success: true, skipped: true, message: msg });
       }
-      console.log(`[Weekly Workflow] Tuesday fallback: Monday (${mondayStr}) did not create portfolios, proceeding...`);
-    } else if (etDay !== 1) {
-      // Not Monday or Tuesday — skip (shouldn't happen via cron, but guard for manual calls)
-      console.log(`[Weekly Workflow] Today is not Monday or Tuesday (day=${etDay}), skipping`);
-      return res.json({ success: true, skipped: true, message: 'Only runs on Monday (or Tuesday as fallback)' });
+      console.log(`[Weekly Workflow] Fallback: first trading day (${firstTradingDay}) did not create portfolios, proceeding...`);
     }
 
     // Step 1: Check if both lists already have ranking results for today
