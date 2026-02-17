@@ -158,48 +158,26 @@ async function start() {
     // scheduleEastern() converts Eastern times to UTC and auto-reschedules on DST transitions.
     // Each handler skips execution on market holidays.
 
-    // Daily check at 9:30 AM Eastern (Mon-Fri, trading days only)
-    scheduleEastern(cron, 9, 30, '1-5', async () => {
+    // Daily workflow at 10:00 AM Eastern (Mon-Fri, trading days only)
+    // Checks for new list updates, downloads & analyzes if found, creates
+    // portfolios for any pending rankings/EMA analyses. Each list is independent.
+    scheduleEastern(cron, 10, 0, '1-5', async () => {
       if (!isTradingDayToday()) {
-        console.log('Skipping scheduled check-and-download: market is closed today (holiday)');
+        console.log('Skipping daily workflow: market is closed today (holiday)');
         return;
       }
-      console.log('Running scheduled check-and-download...');
+      console.log('Running daily workflow...');
       try {
         const fetch = globalThis.fetch || (await import('node-fetch')).default;
-        await fetch(`http://localhost:${PORT}/api/automation/check-and-download`, {
-          method: 'POST',
-        });
-        console.log('Scheduled check completed');
-      } catch (err) {
-        console.error('Scheduled check failed:', err.message);
-      }
-    }, 'Daily check-and-download (9:30 AM ET)');
-
-    // Weekly auto-portfolio workflow at 5:30 PM Eastern (Mon-Fri, trading days only)
-    // Fires every weekday but the route handler only proceeds on the 1st or 2nd
-    // trading day of the week, replacing the old Mon+Tue hardcoded schedule.
-    scheduleEastern(cron, 17, 30, '1-5', async () => {
-      if (!isTradingDayToday()) {
-        console.log('Skipping weekly workflow: market is closed today (holiday)');
-        return;
-      }
-      console.log('Running weekly auto-portfolio workflow...');
-      try {
-        const fetch = globalThis.fetch || (await import('node-fetch')).default;
-        const response = await fetch(`http://localhost:${PORT}/api/automation/monday-workflow`, {
+        const response = await fetch(`http://localhost:${PORT}/api/automation/daily-workflow`, {
           method: 'POST',
         });
         const result = await response.json();
-        if (result.skipped) {
-          console.log('Weekly workflow skipped:', result.message);
-        } else {
-          console.log(`Weekly workflow complete. Portfolios created: ${result.portfoliosCreated?.length || 0}`);
-        }
+        console.log(`Daily workflow complete. Portfolios created: ${result.portfoliosCreated?.length || 0}`);
       } catch (err) {
-        console.error('Weekly workflow failed:', err.message);
+        console.error('Daily workflow failed:', err.message);
       }
-    }, 'Weekly portfolio workflow (5:30 PM ET)');
+    }, 'Daily workflow (10:00 AM ET)');
 
     // Daily price update at 5:00 PM Eastern (Mon-Fri, trading days only)
     scheduleEastern(cron, 17, 0, '1-5', async () => {
