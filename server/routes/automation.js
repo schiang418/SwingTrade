@@ -1,14 +1,14 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
-const { eq, and } = require('drizzle-orm');
+const { eq, and, desc, ne } = require('drizzle-orm');
 const { getDb, getEasternDate } = require('../db');
 const { chartListUpdates, rankingResults, emaScanResults, emaAnalysis, portfolios: portfoliosTable } = require('../schema');
 const { parseExcelForTickers } = require('../../src/excel');
 const { runAnalysis } = require('./analysis');
 const { analyzeScanResults } = require('../gemini');
 
-const { isTradingDayToday, getTradingDayOfWeek, getFirstTradingDayOfWeek, getEasternDateStr } = require('../trading-calendar');
+const { isTradingDayToday } = require('../trading-calendar');
 
 const router = express.Router();
 
@@ -473,12 +473,12 @@ async function processEmaResults(db, listName, scanData, today) {
   }
 }
 
-// Weekly auto-portfolio workflow
-// Checks if both lists were updated today, runs analysis if needed, and creates portfolios automatically.
-// Runs on the 1st trading day of the week, with a fallback on the 2nd trading day.
-// Properly skips market holidays (no hardcoded Mon/Tue assumption).
+// Daily auto-portfolio workflow
+// Runs every trading day at 10 AM ET. Each list (leading_stocks, hot_stocks) is
+// handled independently: check for new updates → download & analyze → create
+// ranking + EMA portfolios for any pending results.
 // Can be triggered manually via POST or automatically via cron.
-router.post('/monday-workflow', async (req, res) => {
+router.post('/daily-workflow', async (req, res) => {
   const PORT = process.env.PORT || 3000;
   const baseUrl = `http://localhost:${PORT}`;
   const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
@@ -487,114 +487,81 @@ router.post('/monday-workflow', async (req, res) => {
     const db = getDb();
     const today = getEasternDate();
 
-    console.log(`[Weekly Workflow] Starting for ${today}...`);
+    console.log(`[Daily Workflow] Starting for ${today}...`);
 
-    // Step 0: Determine where today falls within this week's trading days
     if (!isTradingDayToday()) {
-      console.log(`[Weekly Workflow] Today (${today}) is not a trading day, skipping`);
+      console.log(`[Daily Workflow] Today (${today}) is not a trading day, skipping`);
       return res.json({ success: true, skipped: true, message: 'Market is closed today (holiday or weekend)' });
     }
 
-    const tradingDayNum = getTradingDayOfWeek(today);
-
-    if (tradingDayNum > 2) {
-      console.log(`[Weekly Workflow] Today is trading day #${tradingDayNum} of the week, skipping (only runs on 1st or 2nd)`);
-      return res.json({ success: true, skipped: true, message: 'Only runs on the first two trading days of the week' });
-    }
-
-    // If this is the 2nd trading day, check whether the 1st already created portfolios
-    if (tradingDayNum === 2) {
-      const firstTradingDay = getFirstTradingDayOfWeek(today);
-
-      const firstDayPortfolios = await db
-        .select()
-        .from(portfoliosTable)
-        .where(eq(portfoliosTable.purchaseDate, firstTradingDay));
-
-      if (firstDayPortfolios.length > 0) {
-        const msg = `Fallback check: first trading day (${firstTradingDay}) already created ${firstDayPortfolios.length} portfolios, skipping`;
-        console.log(`[Weekly Workflow] ${msg}`);
-        return res.json({ success: true, skipped: true, message: msg });
-      }
-      console.log(`[Weekly Workflow] Fallback: first trading day (${firstTradingDay}) did not create portfolios, proceeding...`);
-    }
-
-    // Step 1: Check if both lists already have ranking results for today
-    // (the daily 9:30 AM check may have already downloaded & analyzed them)
-    let [leadingRanking] = await db
-      .select()
-      .from(rankingResults)
-      .where(and(eq(rankingResults.listName, 'leading_stocks'), eq(rankingResults.analysisDate, today)));
-    let [hotRanking] = await db
-      .select()
-      .from(rankingResults)
-      .where(and(eq(rankingResults.listName, 'hot_stocks'), eq(rankingResults.analysisDate, today)));
-
-    // If not both available, run check-and-download to try to get them
-    if (!leadingRanking || !hotRanking) {
-      console.log('[Weekly Workflow] Not both rankings available yet, running check-and-download...');
+    // Step 1: Check EarningsBeats for new list updates and download/analyze if found
+    console.log('[Daily Workflow] Running check-and-download...');
+    let downloadResult = null;
+    try {
       const checkRes = await fetchFn(`${baseUrl}/api/automation/check-and-download`, { method: 'POST' });
-      const checkData = await checkRes.json();
-
-      if (!checkData.success) {
-        console.error('[Weekly Workflow] Check-and-download failed:', checkData.error);
+      downloadResult = await checkRes.json();
+      if (!downloadResult.success) {
+        console.error('[Daily Workflow] Check-and-download failed:', downloadResult.error);
+      } else {
+        const leadingNew = downloadResult.automation?.leading_stocks?.is_new ? 'NEW' : 'no change';
+        const hotNew = downloadResult.automation?.hot_stocks?.is_new ? 'NEW' : 'no change';
+        console.log(`[Daily Workflow] Check-and-download done. Leading: ${leadingNew}, Hot: ${hotNew}`);
       }
-
-      // Re-query after check-and-download
-      [leadingRanking] = await db
-        .select()
-        .from(rankingResults)
-        .where(and(eq(rankingResults.listName, 'leading_stocks'), eq(rankingResults.analysisDate, today)));
-      [hotRanking] = await db
-        .select()
-        .from(rankingResults)
-        .where(and(eq(rankingResults.listName, 'hot_stocks'), eq(rankingResults.analysisDate, today)));
+    } catch (err) {
+      console.error('[Daily Workflow] Check-and-download error:', err.message);
     }
 
-    // Step 2: Verify both lists have today's ranking results
-    if (!leadingRanking || !hotRanking) {
-      const msg = `Not both lists have updates for ${today}. Leading: ${leadingRanking ? 'available' : 'missing'}, Hot: ${hotRanking ? 'available' : 'missing'}`;
-      console.log(`[Weekly Workflow] ${msg}`);
-      return res.json({ success: true, skipped: true, message: msg });
-    }
-
-    console.log('[Weekly Workflow] Both lists have updates for today! Creating portfolios...');
-
-    // Step 3: Create ranking-based portfolios for both lists (top 5 by score)
+    // Step 2: For each list independently, create portfolios for any pending rankings/analyses
     const portfoliosCreated = [];
 
-    for (const ranking of [leadingRanking, hotRanking]) {
-      if (ranking.portfolioStatus === 'active') {
-        console.log(`[Weekly Workflow] Ranking portfolio already exists for ${ranking.listName}, skipping`);
-        continue;
-      }
-      try {
-        const portRes = await fetchFn(`${baseUrl}/api/portfolios`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rankingResultId: ranking.id }),
-        });
-        const portData = await portRes.json();
-        if (portData.success) {
-          console.log(`[Weekly Workflow] Created ranking portfolio for ${ranking.listName} (ID: ${portData.portfolio.id})`);
-          portfoliosCreated.push({ listName: ranking.listName, type: 'ranking', portfolioId: portData.portfolio.id });
-        } else {
-          console.error(`[Weekly Workflow] Failed to create ranking portfolio for ${ranking.listName}:`, portData.error);
-        }
-      } catch (err) {
-        console.error(`[Weekly Workflow] Error creating ranking portfolio for ${ranking.listName}:`, err.message);
-      }
-    }
-
-    // Step 4: Create EMA portfolios (top 5 by AI star rating) if analyses exist for today
     for (const listName of ['leading_stocks', 'hot_stocks']) {
-      try {
-        const [analysis] = await db
-          .select()
-          .from(emaAnalysis)
-          .where(and(eq(emaAnalysis.listName, listName), eq(emaAnalysis.analysisDate, today)));
+      // Create ranking portfolio if there's a pending ranking without one
+      const [ranking] = await db
+        .select()
+        .from(rankingResults)
+        .where(and(
+          eq(rankingResults.listName, listName),
+          ne(rankingResults.portfolioStatus, 'active')
+        ))
+        .orderBy(desc(rankingResults.analysisDate))
+        .limit(1);
 
-        if (analysis && analysis.portfolioStatus !== 'active') {
+      if (ranking) {
+        console.log(`[Daily Workflow] Found pending ranking for ${listName} (analysisDate: ${ranking.analysisDate}), creating portfolio...`);
+        try {
+          const portRes = await fetchFn(`${baseUrl}/api/portfolios`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rankingResultId: ranking.id }),
+          });
+          const portData = await portRes.json();
+          if (portData.success) {
+            console.log(`[Daily Workflow] Created ranking portfolio for ${listName} (ID: ${portData.portfolio.id})`);
+            portfoliosCreated.push({ listName, type: 'ranking', portfolioId: portData.portfolio.id });
+          } else {
+            console.error(`[Daily Workflow] Failed to create ranking portfolio for ${listName}:`, portData.error);
+          }
+        } catch (err) {
+          console.error(`[Daily Workflow] Error creating ranking portfolio for ${listName}:`, err.message);
+        }
+      } else {
+        console.log(`[Daily Workflow] No pending ranking for ${listName}`);
+      }
+
+      // Create EMA portfolio if there's a pending EMA analysis without one
+      const [analysis] = await db
+        .select()
+        .from(emaAnalysis)
+        .where(and(
+          eq(emaAnalysis.listName, listName),
+          ne(emaAnalysis.portfolioStatus, 'active')
+        ))
+        .orderBy(desc(emaAnalysis.analysisDate))
+        .limit(1);
+
+      if (analysis) {
+        console.log(`[Daily Workflow] Found pending EMA analysis for ${listName} (analysisDate: ${analysis.analysisDate}), creating portfolio...`);
+        try {
           const portRes = await fetchFn(`${baseUrl}/api/portfolios/ema`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -602,27 +569,47 @@ router.post('/monday-workflow', async (req, res) => {
           });
           const portData = await portRes.json();
           if (portData.success) {
-            console.log(`[Weekly Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
+            console.log(`[Daily Workflow] Created EMA portfolio for ${listName} (ID: ${portData.portfolio.id})`);
             portfoliosCreated.push({ listName, type: 'ema', portfolioId: portData.portfolio.id });
           } else {
-            console.error(`[Weekly Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
+            console.error(`[Daily Workflow] Failed to create EMA portfolio for ${listName}:`, portData.error);
           }
+        } catch (err) {
+          console.error(`[Daily Workflow] Error creating EMA portfolio for ${listName}:`, err.message);
         }
-      } catch (err) {
-        console.error(`[Weekly Workflow] Error creating EMA portfolio for ${listName}:`, err.message);
+      } else {
+        console.log(`[Daily Workflow] No pending EMA analysis for ${listName}`);
       }
     }
 
-    console.log(`[Weekly Workflow] Complete. Created ${portfoliosCreated.length} portfolios.`);
+    console.log(`[Daily Workflow] Complete. Created ${portfoliosCreated.length} portfolios.`);
 
     res.json({
       success: true,
       skipped: false,
       date: today,
       portfoliosCreated,
+      downloadResult: downloadResult?.success ? {
+        leadingNew: downloadResult.automation?.leading_stocks?.is_new || false,
+        hotNew: downloadResult.automation?.hot_stocks?.is_new || false,
+      } : null,
     });
   } catch (err) {
-    console.error('[Weekly Workflow] Error:', err);
+    console.error('[Daily Workflow] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Keep legacy endpoint name for backwards compatibility
+router.post('/monday-workflow', async (req, res) => {
+  const PORT = process.env.PORT || 3000;
+  const baseUrl = `http://localhost:${PORT}`;
+  const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
+  try {
+    const response = await fetchFn(`${baseUrl}/api/automation/daily-workflow`, { method: 'POST' });
+    const result = await response.json();
+    res.status(response.status).json(result);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
