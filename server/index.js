@@ -179,8 +179,8 @@ async function start() {
       }
     }, 'Daily workflow (10:00 AM ET, Mon-Tue)');
 
-    // Daily price update at 5:00 PM Eastern (Mon-Fri, trading days only)
-    scheduleEastern(cron, 17, 0, '1-5', async () => {
+    // Daily price update at 5:15 PM Eastern (Mon-Fri, trading days only)
+    scheduleEastern(cron, 17, 15, '1-5', async () => {
       if (!isTradingDayToday()) {
         console.log('Skipping scheduled price update: market is closed today (holiday)');
         return;
