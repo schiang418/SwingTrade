@@ -1,47 +1,52 @@
-# Sub-Portal Authentication Implementation Strategy
+# SwingTrade — Sub-Portal Authentication Implementation
 
-This document outlines authentication procedures for CycleScope sub-portals (OptionStrategy, SwingTrade, and future services).
+> **Canonical spec:** [`cyclescope-doc/docs/UNIFIED_AUTH_STRATEGY.md`](https://github.com/schiang418/cyclescope-doc/blob/main/docs/UNIFIED_AUTH_STRATEGY.md) is the single source of truth for cross-project authentication.
+>
+> This document is a **SwingTrade-specific implementation guide** derived from the canonical spec. If anything here conflicts with the unified strategy, the unified strategy wins.
+>
+> Last updated: 2026-02-20
+
+---
+
+## SwingTrade Constants
+
+| Constant | Value |
+|----------|-------|
+| `SERVICE_ID` | `'swingtrade'` |
+| `SESSION_COOKIE_NAME` | `'swingtrade_session'` |
+| `ALLOWED_TIERS` | `['basic', 'stocks_and_options']` |
+| Portal secret name | `SWINGTRADE_TOKEN_SECRET` (portal-side) |
+| Local env var | `PREMIUM_TOKEN_SECRET` (must match portal's `SWINGTRADE_TOKEN_SECRET`) |
+| Portal launch endpoint | `POST /api/launch/swingtrade` |
+| Auth handoff route | `GET /auth/handoff?token=xxx` |
+
+> **Business policy:** Both `basic` and `stocks_and_options` tiers currently have access (promotional). To restrict to premium only, change `ALLOWED_TIERS` to `['stocks_and_options']` — no code or DB changes needed.
+
+---
 
 ## Architecture Overview
 
-The authentication flow follows these steps:
+```
+Member Portal                          SwingTrade
+─────────────                          ──────────
+1. User clicks "Launch SwingTrade"
+2. Portal verifies session + tier
+3. Portal signs 5-min handoff JWT
+   (secret: SWINGTRADE_TOKEN_SECRET)
+4. Redirects browser ─────────────────► GET /auth/handoff?token=eyJ...
+                                        5. Verify handoff token (PREMIUM_TOKEN_SECRET)
+                                        6. Validate service === 'swingtrade'
+                                        7. Check tier in ALLOWED_TIERS
+                                        8. Create 7-day session JWT (JWT_SECRET)
+                                        9. Set httpOnly cookie: swingtrade_session
+                                       10. Redirect to /
+                                       11. All /api/* calls include cookie
+                                       12. requireAuth middleware validates cookie
+```
 
-1. User clicks "Launch [Service]" in Member Portal
-2. Portal verifies session and tier access
-3. Portal generates 5-minute handoff JWT signed with per-service secret
-4. Browser redirects to sub-portal with token in URL
-5. Sub-portal verifies handoff token, validates service claim matches, checks tier authorization
-6. Sub-portal creates local 7-day session JWT and sets httpOnly cookie
-7. All subsequent API calls include session cookie
-8. RequireAuth middleware validates cookie on every `/api/*` request (except `/api/health`)
+**SwingTrade does NOT implement:** passwords, signup, OAuth, Patreon integration, or subscription management. All of that lives in the Member Portal.
 
-**Key principles:** Sub-portals never handle passwords, signup, or OAuth. All user authentication UI lives exclusively in the Member Portal. Patreon serves only as a subscription data source managed by the Portal.
-
-## Service-Specific Constants
-
-Each sub-portal uses identical implementation patterns with different constants:
-
-| Constant | OptionStrategy | SwingTrade |
-|----------|----------------|-----------|
-| `SERVICE_ID` | `'option_strategy'` | `'swingtrade'` |
-| `SESSION_COOKIE_NAME` | `'option_strategy_session'` | `'swingtrade_session'` |
-| `ALLOWED_TIERS` | `['basic', 'stocks_and_options']` | `['basic', 'stocks_and_options']` |
-| Portal secret name | `OPTION_STRATEGY_TOKEN_SECRET` | `SWINGTRADE_TOKEN_SECRET` |
-| Local env var | `PREMIUM_TOKEN_SECRET` | `PREMIUM_TOKEN_SECRET` |
-| Launch endpoint | `POST /api/launch/option-strategy` | `POST /api/launch/swingtrade` |
-
-## Subscription Tiers (Canonical)
-
-Only two tier values exist system-wide:
-
-| Tier | Description |
-|------|-------------|
-| `'basic'` | Default for all portal users |
-| `'stocks_and_options'` | Premium tier from Patreon subscription |
-
-Note: `'free'`, `'premium'`, and `'stocks'` tiers are deprecated. Patreon tier mapping (portal-side only): Basic → `'basic'`; Premium/Stocks + Options → `'stocks_and_options'`; unmapped/null → `'basic'` (default).
-
-Current business policy grants promotional access to basic members. Restrict access later by removing `'basic'` from `ALLOWED_TIERS`.
+---
 
 ## Dependencies
 
@@ -51,81 +56,212 @@ npm install jose cookie-parser
 
 | Package | Purpose |
 |---------|---------|
-| `jose` | JWT signing and verification (HS256) |
-| `cookie-parser` | Parse cookies from requests |
+| `jose` | JWT verification and signing (HS256) |
+| `cookie-parser` | Parse cookies from incoming requests |
+
+---
 
 ## Environment Variables
 
-### Backend (.env)
+### Backend (`/.env`)
 
-```
-PREMIUM_TOKEN_SECRET=<per-service-secret>
+```env
+# Handoff token verification — MUST match portal's SWINGTRADE_TOKEN_SECRET
+PREMIUM_TOKEN_SECRET=<same value as portal's SWINGTRADE_TOKEN_SECRET>
+
+# Local session signing — unique to SwingTrade, never shared
+JWT_SECRET=<generate: openssl rand -base64 32>
+
+# Portal URL for redirects and CORS
 MEMBER_PORTAL_URL=https://portal.cyclescope.com
-JWT_SECRET=<unique-random-secret>
 ```
 
-### Frontend (.env)
+### Frontend (`/.env`)
 
-```
+```env
 VITE_MEMBER_PORTAL_URL=https://portal.cyclescope.com
 ```
 
-**Critical rules:** Each sub-portal's `PREMIUM_TOKEN_SECRET` matches a different portal secret (per-service isolation). Each sub-portal has its own unique `JWT_SECRET` never shared between services. Compromising one service's secret doesn't affect others.
+**Critical:** `PREMIUM_TOKEN_SECRET` and `JWT_SECRET` must be different values. A compromise of the handoff secret should not compromise local sessions (and vice versa).
 
-### Startup Validation
+---
 
-Services must fail fast if required auth vars are missing:
+## Implementation
+
+### Auth Module (`server/auth.js`)
 
 ```js
-const REQUIRED_AUTH_VARS = ['PREMIUM_TOKEN_SECRET', 'JWT_SECRET', 'MEMBER_PORTAL_URL'];
+import { jwtVerify, SignJWT } from 'jose';
 
+// ── SwingTrade-specific constants ──
+const SERVICE_ID = 'swingtrade';
+const SESSION_COOKIE_NAME = 'swingtrade_session';
+const ALLOWED_TIERS = ['basic', 'stocks_and_options'];
+
+// ── Token Exchange Endpoint ──
+// Route: GET /auth/handoff?token=xxx
+export async function handleAuthHandoff(req, res) {
+  const { token } = req.query;
+
+  if (!token || typeof token !== 'string') {
+    return res.redirect(`${process.env.MEMBER_PORTAL_URL}?error=missing_token`);
+  }
+
+  try {
+    // 1. Verify handoff token from Member Portal
+    const premiumSecret = new TextEncoder().encode(process.env.PREMIUM_TOKEN_SECRET);
+    const { payload } = await jwtVerify(token, premiumSecret);
+
+    // 2. Validate service claim matches SwingTrade
+    if (payload.service && payload.service !== SERVICE_ID) {
+      console.error(`[Auth] Service mismatch: expected ${SERVICE_ID}, got ${payload.service}`);
+      return res.redirect(`${process.env.MEMBER_PORTAL_URL}?error=invalid_service`);
+    }
+
+    // 3. Check tier authorization
+    if (!ALLOWED_TIERS.includes(payload.tier)) {
+      return res.redirect(`${process.env.MEMBER_PORTAL_URL}?error=upgrade_required`);
+    }
+
+    // 4. Create local 7-day session token
+    const sessionSecret = new TextEncoder().encode(process.env.JWT_SECRET);
+    const sessionToken = await new SignJWT({
+      email: payload.email,
+      tier: payload.tier,
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(payload.sub)     // MUST use .setSubject() for user ID
+      .setIssuedAt()
+      .setExpirationTime('7d')
+      .sign(sessionSecret);
+
+    // 5. Set session cookie
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // 6. Redirect to app root
+    return res.redirect('/');
+
+  } catch (error) {
+    console.error('[Auth] Token verification failed:', error);
+    return res.redirect(`${process.env.MEMBER_PORTAL_URL}?error=invalid_token`);
+  }
+}
+
+// ── Auth Middleware ──
+// Applies to: all /api/* routes except /api/health
+export async function requireAuth(req, res, next) {
+  const token = req.cookies?.[SESSION_COOKIE_NAME];
+
+  if (!token) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  try {
+    const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+    const { payload } = await jwtVerify(token, secret);
+    req.user = payload; // { sub, email, tier, iat, exp }
+    next();
+  } catch {
+    return res.status(401).json({ error: 'session_expired' });
+  }
+}
+```
+
+### Server Integration (`server/index.js`)
+
+Add to the existing Express setup:
+
+```js
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import { handleAuthHandoff, requireAuth } from './auth.js';
+
+// ── Startup validation ──
+const REQUIRED_AUTH_VARS = ['PREMIUM_TOKEN_SECRET', 'JWT_SECRET', 'MEMBER_PORTAL_URL'];
 for (const varName of REQUIRED_AUTH_VARS) {
   if (!process.env[varName]) {
     throw new Error(`Missing required environment variable: ${varName}`);
   }
 }
+
+// ── Middleware (before routes) ──
+app.use(cookieParser());
+app.use(cors({
+  origin: process.env.MEMBER_PORTAL_URL,
+  credentials: true,
+}));
+
+// ── Auth endpoint (before API routes) ──
+app.get('/auth/handoff', handleAuthHandoff);
+
+// ── Protect API routes (except /api/health) ──
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+  return requireAuth(req, res, next);
+});
+
+// ... existing route registrations (rankings, portfolios, analysis, etc.)
 ```
+
+### Frontend 401 Handling (`src/lib/api.js`)
+
+```js
+const MEMBER_PORTAL_URL = import.meta.env.VITE_MEMBER_PORTAL_URL
+  || 'https://portal.cyclescope.com';
+
+export async function apiFetch(url, options) {
+  const res = await fetch(url, {
+    ...options,
+    credentials: 'include', // MUST include cookies
+  });
+
+  if (res.status === 401) {
+    window.location.href = MEMBER_PORTAL_URL;
+    throw new Error('Session expired');
+  }
+
+  return res;
+}
+```
+
+---
 
 ## JWT Specifications
 
-### 6.1 Handoff Token (Portal → Sub-Portal)
-
-Issued by Member Portal, verified by sub-portal.
+### Handoff Token (Portal → SwingTrade)
 
 | Property | Value |
 |----------|-------|
 | Algorithm | HS256 |
 | Library | `jose` |
-| Secret | Per-service (OPTION_STRATEGY_TOKEN_SECRET or SWINGTRADE_TOKEN_SECRET) |
+| Signing secret | Portal's `SWINGTRADE_TOKEN_SECRET` = SwingTrade's `PREMIUM_TOKEN_SECRET` |
 | Expiration | 5 minutes |
-
-**Canonical payload:**
 
 ```json
 {
   "sub": "<userId>",
   "email": "<user email>",
   "tier": "basic | stocks_and_options",
-  "service": "option_strategy | swingtrade",
+  "service": "swingtrade",
   "iat": 1234567890,
   "exp": 1234568190
 }
 ```
 
-**Important:** The `sub` claim must use `.setSubject()` — not as a payload field. Don't expect `userId` or `patreonId`; use `payload.sub` for identification.
-
-### 6.2 Local Session Token (Sub-Portal)
-
-Created by sub-portal after successful handoff, stored as httpOnly cookie.
+### Local Session Token (SwingTrade)
 
 | Property | Value |
 |----------|-------|
 | Algorithm | HS256 |
 | Library | `jose` |
-| Secret | Sub-portal's own JWT_SECRET |
+| Signing secret | SwingTrade's own `JWT_SECRET` |
 | Expiration | 7 days |
-
-**Canonical payload:**
 
 ```json
 {
@@ -137,127 +273,66 @@ Created by sub-portal after successful handoff, stored as httpOnly cookie.
 }
 ```
 
-**Important:** Use `.setSubject(payload.sub)` — do NOT put user ID in payload body.
+**Important:** User ID goes in `sub` via `.setSubject()` — never as a payload field.
 
-## Cookie Specifications
+---
+
+## Cookie Specification
 
 | Property | Value |
 |----------|-------|
 | Name | `swingtrade_session` |
-| `httpOnly` | `true` (prevents XSS JavaScript access) |
-| `secure` | `true` in production (HTTPS only) |
-| `sameSite` | `'lax'` (CSRF protection) |
+| `httpOnly` | `true` |
+| `secure` | `true` in production |
+| `sameSite` | `'lax'` |
 | `path` | `'/'` |
-| `maxAge` | 7 days (604800000 milliseconds) |
+| `maxAge` | 604800000 ms (7 days) |
 
-**Railway note:** Behind Railway proxy, the `secure` flag may need to check `X-Forwarded-Proto` header instead of just `NODE_ENV`.
-
-## Implementation
-
-### 8.1 Token Exchange Endpoint
-
-**Route:** `GET /auth/handoff?token=xxx`
-
-The endpoint verifies the handoff token, validates service and tier claims, creates a local session token, sets an httpOnly cookie, and redirects to the app root. On any verification failure, it redirects to the portal with an appropriate error parameter.
-
-### 8.2 Auth Middleware
-
-**Applies to:** All `/api/*` routes except `/api/health`
-
-The middleware extracts the session cookie, verifies its signature using the sub-portal's JWT_SECRET, extracts user data (sub, email, tier), and attaches it to `req.user`. Missing or invalid tokens return 401 status.
-
-### 8.3 CORS Configuration
-
-Configure CORS to accept requests from the Member Portal URL only, allowing credentials (cookies) in cross-origin requests.
-
-### 8.4 Server Setup Order
-
-1. Load environment variables (dotenv)
-2. Validate required auth vars exist
-3. Initialize middleware (cookie-parser, CORS)
-4. Register auth endpoints (GET /auth/handoff)
-5. Register API routes with requireAuth middleware
-6. Register health endpoint (unauthenticated)
-
-### 8.5 Frontend 401 Handling
-
-When API calls return 401, redirect to the portal:
-
-```typescript
-const portalUrl = import.meta.env.VITE_MEMBER_PORTAL_URL;
-window.location.href = `${portalUrl}?error=session_expired`;
-```
-
-## Error Handling
-
-### Sub-Portal API Errors
-
-Return 401 with JSON: `{ error: 'unauthorized' }` or `{ error: 'session_expired' }`
-
-### Auth Redirect Error Parameters
-
-Portal redirects include error query parameters:
-- `error=missing_token` — No token in URL
-- `error=invalid_token` — Token verification failed
-- `error=invalid_service` — Service claim doesn't match sub-portal
-- `error=upgrade_required` — Tier not in ALLOWED_TIERS
-
-## What Sub-Portals Do NOT Implement
-
-- Password handling or reset flows
-- User signup or registration
-- OAuth authentication
-- Patreon API integration
-- Subscription management
-- Password validation
-
-All these functions remain exclusively in the Member Portal.
-
-## Security Summary
-
-**Token isolation:** Each service uses a unique per-service secret for handoff tokens and a separate JWT_SECRET for session tokens. Compromising one service doesn't expose others.
-
-**Defense in depth:** Sub-portals verify service claim matches their own SERVICE_ID AND check tier authorization independently.
-
-**Session security:** Sessions use httpOnly, secure, and sameSite cookies. Token expiration is enforced (5 min handoff, 7 day session).
-
-**CORS protection:** Only Member Portal origin can access sub-portal APIs with credentials.
-
-## Tier Propagation & Revocation
-
-The Member Portal generates handoff tokens reflecting current user tier from Patreon. If tier changes (upgrade/downgrade), the user must re-launch from the portal to receive updated handoff token with new tier. Existing sessions continue with old tier until expiration (7 days) or manual logout.
-
-## Implementation Phases
-
-### Phase 1: Dependencies & Config
-Install jose and cookie-parser; set environment variables.
-
-### Phase 2: Backend Auth
-Implement token exchange endpoint, auth middleware, and CORS configuration.
-
-### Phase 3: Frontend Auth
-Add 401 redirect handler; integrate session management in API client.
-
-### Phase 4: Validation
-Test handoff flow, verify tier checks, validate error scenarios.
-
-## Staging & Deployment
-
-### Branch Strategy
-Feature branches merge to `develop` (staging); `develop` merges to `main` (production).
-
-### Staging Environment
-Deploy to staging URLs with test Member Portal for integration testing before production.
-
-### Staging Env Vars
-Use staging portal URL and per-service staging secrets for testing.
-
-## Discrepancies Resolved
-
-This specification replaces conflicting implementations. Both OptionStrategy and SwingTrade agents must follow this canonical spec.
+**Railway note:** Behind Railway proxy, `secure` may need to check `X-Forwarded-Proto` header instead of `NODE_ENV`.
 
 ---
 
-**Status:** Canonical — both agents MUST follow this spec
-**Last updated:** 2026-02-20
-**Supersedes:** Previous auth implementation docs (`SUB_PORTAL_AUTH_INTEGRATION.md`)
+## Error Handling
+
+### API Errors (401)
+
+```json
+{ "error": "unauthorized" }
+{ "error": "session_expired" }
+```
+
+### Auth Redirect Errors
+
+| Query Parameter | Meaning |
+|----------------|---------|
+| `?error=missing_token` | No token in handoff URL |
+| `?error=invalid_token` | Token verification failed |
+| `?error=invalid_service` | Token's `service` claim is not `swingtrade` |
+| `?error=upgrade_required` | User's tier not in `ALLOWED_TIERS` |
+
+---
+
+## Tier Propagation
+
+Tier changes on Patreon propagate through the portal's daily sync. Users must re-launch from the portal to get an updated handoff token. Existing sessions continue with the old tier until expiration (7 days).
+
+---
+
+## Implementation Checklist
+
+- [ ] Install `jose` and `cookie-parser`
+- [ ] Add `PREMIUM_TOKEN_SECRET`, `JWT_SECRET`, `MEMBER_PORTAL_URL` to `.env`
+- [ ] Add `VITE_MEMBER_PORTAL_URL` to frontend `.env`
+- [ ] Create `server/auth.js` with `handleAuthHandoff` and `requireAuth`
+- [ ] Add `cookieParser()` middleware to `server/index.js`
+- [ ] Add CORS config with `credentials: true` locked to `MEMBER_PORTAL_URL`
+- [ ] Register `GET /auth/handoff` route
+- [ ] Apply `requireAuth` to all `/api/*` routes (except `/api/health`)
+- [ ] Add startup validation for required env vars
+- [ ] Add frontend 401 redirect handler
+- [ ] Test end-to-end: portal login → launch → handoff → session → API calls → 401 redirect
+
+---
+
+**Canonical spec:** [`cyclescope-doc/docs/UNIFIED_AUTH_STRATEGY.md`](https://github.com/schiang418/cyclescope-doc/blob/main/docs/UNIFIED_AUTH_STRATEGY.md)
+**Discrepancies report:** [`cyclescope-doc/docs/CROSS_PROJECT_DISCREPANCIES.md`](https://github.com/schiang418/cyclescope-doc/blob/main/docs/CROSS_PROJECT_DISCREPANCIES.md)
