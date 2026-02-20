@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, TrendingUp, Eye, Star } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
-  fetchEmaAnalysis, createEmaPortfolio,
+  fetchEmaAnalysis,
   EmaAnalysisData, EmaStockAnalysis, EmaCategorySummary,
 } from '../api';
-import PortfolioDialog from './PortfolioDialog';
 
 interface Props {
   listName: string;
   analysisDate?: string;
-  showToast: (msg: string, type?: 'success' | 'error') => void;
-  onPortfolioChange: () => void;
 }
 
 const BUCKET_STYLES: Record<string, { bg: string; border: string; text: string; label: string }> = {
@@ -33,11 +30,9 @@ function StarDisplay({ rating }: { rating: number }) {
   );
 }
 
-export default function EmaAnalysisSection({ listName, analysisDate, showToast, onPortfolioChange }: Props) {
+export default function EmaAnalysisSection({ listName, analysisDate }: Props) {
   const [data, setData] = useState<EmaAnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creatingPortfolio, setCreatingPortfolio] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,23 +49,6 @@ export default function EmaAnalysisSection({ listName, analysisDate, showToast, 
     })();
     return () => { cancelled = true; };
   }, [listName, analysisDate]);
-
-  const handleCreatePortfolio = async () => {
-    if (!data?.id) return;
-    setCreatingPortfolio(true);
-    try {
-      await createEmaPortfolio(data.id);
-      showToast('EMA Portfolio created with top 5 stocks by star rating!');
-      // Refresh data
-      const result = await fetchEmaAnalysis(listName, analysisDate);
-      setData(result);
-      onPortfolioChange();
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setCreatingPortfolio(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -125,65 +103,6 @@ export default function EmaAnalysisSection({ listName, analysisDate, showToast, 
             </div>
           );
         })}
-      </div>
-
-      {/* EMA Portfolio Section */}
-      <div className="mb-4">
-        {(!data.portfolioStatus || data.portfolioStatus === 'none') ? (
-          <div className="bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
-            <p className="text-[#8b8fa3] text-sm mb-2">
-              Create a virtual $100K EMA portfolio with the top 5 stocks by star rating
-            </p>
-            <button
-              onClick={handleCreatePortfolio}
-              disabled={creatingPortfolio}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700
-                text-white rounded-lg font-semibold text-sm transition-all disabled:opacity-50"
-            >
-              {creatingPortfolio ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Star className="w-4 h-4" />
-                  Create EMA Portfolio
-                </>
-              )}
-            </button>
-          </div>
-        ) : data.portfolioStatus === 'active' ? (
-          <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-3 h-3 bg-purple-500 rounded-full animate-pulse" />
-              <span className="text-purple-400 font-semibold text-sm">EMA Portfolio Active</span>
-            </div>
-            <button
-              onClick={() => setDialogOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#4f8ff7] hover:bg-[#3a7be0]
-                text-white rounded-lg font-semibold text-sm transition-all"
-            >
-              <Eye className="w-4 h-4" />
-              View EMA Portfolio
-            </button>
-          </div>
-        ) : (
-          <div className="bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-3 h-3 bg-gray-500 rounded-full" />
-              <span className="text-[#8b8fa3] font-semibold text-sm">EMA Portfolio Closed</span>
-            </div>
-            <button
-              onClick={() => setDialogOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#242836] hover:bg-[#2a2e3a]
-                text-white rounded-lg font-semibold text-sm transition-all"
-            >
-              <Eye className="w-4 h-4" />
-              View Results
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Stock Analysis Table */}
@@ -268,16 +187,6 @@ export default function EmaAnalysisSection({ listName, analysisDate, showToast, 
             ))}
         </div>
       </details>
-
-      {/* EMA Portfolio Dialog */}
-      {dialogOpen && data.portfolioId && (
-        <PortfolioDialog
-          portfolioId={data.portfolioId}
-          onClose={() => setDialogOpen(false)}
-          onChange={onPortfolioChange}
-          showToast={showToast}
-        />
-      )}
     </div>
   );
 }
