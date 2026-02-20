@@ -335,8 +335,6 @@ export default function App() {
           <EmaAnalysisSection
             listName={activeTab}
             analysisDate={currentDate?.analysisDate}
-            showToast={showToast}
-            onPortfolioChange={handlePortfolioChange}
           />
         </>
       )}
