@@ -32,13 +32,19 @@ router.get('/:listName', async (req, res) => {
       return res.json({ found: false, listName, date: date || null });
     }
 
+    const MAX_LEADING_STOCKS = 100;
+    let results = JSON.parse(result.resultsJson);
+    if (result.listName === 'leading_stocks' && results.length > MAX_LEADING_STOCKS) {
+      results = results.slice(0, MAX_LEADING_STOCKS);
+    }
+
     res.json({
       found: true,
       id: result.id,
       listName: result.listName,
       analysisDate: result.analysisDate,
       listUpdateDate: result.listUpdateDate,
-      results: JSON.parse(result.resultsJson),
+      results,
       spyData: result.spyDataJson ? JSON.parse(result.spyDataJson) : null,
       stockCount: result.stockCount,
       analyzedAt: result.analyzedAt,
