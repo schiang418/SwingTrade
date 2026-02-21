@@ -158,14 +158,14 @@ export default function App() {
       <nav className="bg-[#0c0e14] border-b border-[#2a2e3a] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-white font-bold text-lg tracking-tight">StockScope</span>
-          <span className="text-[#8b8fa3] text-sm font-normal">Swing Trade Strategy</span>
+          <span className="text-[#8b8fa3] text-xs font-normal">Swing Trade Strategy</span>
         </div>
         <a
           href={MEMBER_PORTAL_URL}
           className="flex items-center gap-1.5 text-[#8b8fa3] hover:text-white text-sm font-medium transition-colors"
         >
+          <ArrowLeft className="w-4 h-4" />
           CycleScope Portal
-          <ArrowLeft className="w-4 h-4 rotate-180" />
         </a>
       </nav>
 
