@@ -259,14 +259,18 @@ Compared against OptionStrategy `docs/DEVELOPMENT_PLAN.md` (branch `claude/optio
 
 | Area | OptionStrategy | SwingTrade | Aligned |
 |------|---------------|------------|---------|
-| Auth always required (no optional mode) | No (optional in dev) | Yes | **Diverges** — SwingTrade is stricter |
+| Auth always required (no optional mode) | Yes (updated to match ST) | Yes | Yes |
 | Cron jobs bypass HTTP when auth enabled | Yes (refactored) | Yes (planned in 4.5) | Yes |
 | `vite-env.d.ts` for Vite types | Yes | Yes (planned in 5.4) | Yes |
-| Staging/Testing/Production phases | Phases 7-9 | Phases 7-9 (added) | Yes |
-| Auth function naming | `handleAuthCallback` | `handleAuthHandoff` | Minor diff — both valid |
+| Staging/Testing/Production phases | Phases 7-9 | Phases 7-9 | Yes |
+| Auth function naming | `handleAuthHandoff` (updated) | `handleAuthHandoff` | Yes |
 | Backend language | TypeScript (ESM) | JavaScript (CommonJS) | Expected — same pattern |
 | Frontend 401 + credentials | `fetchJSON` wrapper | `apiFetch` wrapper | Same pattern |
+| CORS always restricted to portal | Yes | Yes | Yes |
 | Error codes: lowercase snake_case | Yes | Yes | Yes |
+| Startup env var validation: fail-fast | Yes | Yes | Yes |
+
+**All items aligned as of 2026-02-21.** No remaining divergences.
 
 ---
 

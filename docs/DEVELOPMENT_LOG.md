@@ -206,7 +206,14 @@ After comparing with OptionStrategy's DEVELOPMENT_PLAN.md, the following gaps we
 5. **Cron validation test added (6.8)** — verify cron jobs work post-auth
 
 ### 2026-02-21 — Auth always required (no dev/prod distinction)
-Removed optional dev mode for auth. Auth is always required — server fails fast if env vars are missing, regardless of environment. No shortcuts. Local development must use real or test auth secrets. This diverges from OptionStrategy (which has optional auth in dev) — OptionStrategy should update to match.
+Removed optional dev mode for auth. Auth is always required — server fails fast if env vars are missing, regardless of environment. No shortcuts. Local development must use real or test auth secrets.
+
+### 2026-02-21 — Full alignment confirmed with OptionStrategy
+OptionStrategy updated their plan to match:
+- Auth required always (was optional in dev) — now matches SwingTrade
+- Function renamed to `handleAuthHandoff` (was `handleAuthCallback`) — now matches golden doc
+- CORS always restricted to portal origin (was open in dev) — now matches SwingTrade
+- All 10 alignment checkpoints confirmed green. No remaining divergences.
 
 ---
 
