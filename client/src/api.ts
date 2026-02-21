@@ -1,5 +1,22 @@
 const BASE = '/api';
 
+const MEMBER_PORTAL_URL = import.meta.env.VITE_MEMBER_PORTAL_URL
+  || 'https://portal.cyclescope.com';
+
+async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  const res = await fetch(url, {
+    ...options,
+    credentials: 'include',
+  });
+
+  if (res.status === 401) {
+    window.location.href = MEMBER_PORTAL_URL;
+    throw new Error('Session expired');
+  }
+
+  return res;
+}
+
 export interface StockResult {
   rank: number;
   ticker: string;
@@ -90,25 +107,25 @@ export async function fetchRanking(listName: string, date?: string): Promise<Ran
   const url = date
     ? `${BASE}/rankings/${listName}?date=${date}`
     : `${BASE}/rankings/${listName}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch ranking');
   return res.json();
 }
 
 export async function fetchDates(listName: string): Promise<DateEntry[]> {
-  const res = await fetch(`${BASE}/rankings/${listName}/dates`);
+  const res = await apiFetch(`${BASE}/rankings/${listName}/dates`);
   if (!res.ok) throw new Error('Failed to fetch dates');
   return res.json();
 }
 
 export async function fetchPortfolio(id: number): Promise<PortfolioData> {
-  const res = await fetch(`${BASE}/portfolios/${id}`);
+  const res = await apiFetch(`${BASE}/portfolios/${id}`);
   if (!res.ok) throw new Error('Failed to fetch portfolio');
   return res.json();
 }
 
 export async function createPortfolio(rankingResultId: number): Promise<any> {
-  const res = await fetch(`${BASE}/portfolios`, {
+  const res = await apiFetch(`${BASE}/portfolios`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rankingResultId }),
@@ -121,13 +138,13 @@ export async function createPortfolio(rankingResultId: number): Promise<any> {
 }
 
 export async function updatePortfolioPrices(id: number): Promise<any> {
-  const res = await fetch(`${BASE}/portfolios/${id}/update-prices`, { method: 'POST' });
+  const res = await apiFetch(`${BASE}/portfolios/${id}/update-prices`, { method: 'POST' });
   if (!res.ok) throw new Error('Failed to update prices');
   return res.json();
 }
 
 export async function triggerCheckAndDownload(): Promise<any> {
-  const res = await fetch(`${BASE}/automation/check-and-download`, { method: 'POST' });
+  const res = await apiFetch(`${BASE}/automation/check-and-download`, { method: 'POST' });
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || 'Automation failed');
@@ -136,7 +153,7 @@ export async function triggerCheckAndDownload(): Promise<any> {
 }
 
 export async function triggerForceAnalysis(): Promise<any> {
-  const res = await fetch(`${BASE}/automation/check-and-download?force=true`, { method: 'POST' });
+  const res = await apiFetch(`${BASE}/automation/check-and-download?force=true`, { method: 'POST' });
   if (!res.ok) {
     const data = await res.json();
     throw new Error(data.error || 'Force analysis failed');
@@ -145,7 +162,7 @@ export async function triggerForceAnalysis(): Promise<any> {
 }
 
 export async function fetchAutomationStatus(): Promise<any[]> {
-  const res = await fetch(`${BASE}/automation/status`);
+  const res = await apiFetch(`${BASE}/automation/status`);
   if (!res.ok) throw new Error('Failed to fetch status');
   return res.json();
 }
@@ -189,19 +206,19 @@ export async function fetchEmaAnalysis(listName: string, date?: string): Promise
   const url = date
     ? `${BASE}/ema-analysis/${listName}?date=${date}`
     : `${BASE}/ema-analysis/${listName}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch EMA analysis');
   return res.json();
 }
 
 export async function fetchEmaDates(listName: string): Promise<{ analysisDate: string; id: number }[]> {
-  const res = await fetch(`${BASE}/ema-analysis/${listName}/dates`);
+  const res = await apiFetch(`${BASE}/ema-analysis/${listName}/dates`);
   if (!res.ok) throw new Error('Failed to fetch EMA dates');
   return res.json();
 }
 
 export async function createEmaPortfolio(emaAnalysisId: number): Promise<any> {
-  const res = await fetch(`${BASE}/portfolios/ema`, {
+  const res = await apiFetch(`${BASE}/portfolios/ema`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emaAnalysisId }),
@@ -236,7 +253,7 @@ export interface ComparisonPortfolio {
 }
 
 export async function fetchPortfolioComparison(): Promise<ComparisonPortfolio[]> {
-  const res = await fetch(`${BASE}/portfolios/comparison`);
+  const res = await apiFetch(`${BASE}/portfolios/comparison`);
   if (!res.ok) throw new Error('Failed to fetch portfolio comparison');
   return res.json();
 }
@@ -245,12 +262,12 @@ export async function uploadAndAnalyze(file: File, listName: string): Promise<an
   // Upload file
   const formData = new FormData();
   formData.append('file', file);
-  const uploadRes = await fetch(`${BASE}/upload`, { method: 'POST', body: formData });
+  const uploadRes = await apiFetch(`${BASE}/upload`, { method: 'POST', body: formData });
   if (!uploadRes.ok) throw new Error('Upload failed');
   const { stocks } = await uploadRes.json();
 
   // Run analysis
-  const analyzeRes = await fetch(`${BASE}/analyze`, {
+  const analyzeRes = await apiFetch(`${BASE}/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stocks }),

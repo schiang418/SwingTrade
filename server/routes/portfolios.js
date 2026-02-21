@@ -6,48 +6,58 @@ const { fetchDailyBars } = require('../../src/polygon');
 
 const router = express.Router();
 
-// Create portfolio from top 5 stocks of a ranking result
-router.post('/', async (req, res) => {
-  try {
-    const db = getDb();
-    const { rankingResultId } = req.body;
+// --- Service functions (callable from cron jobs without HTTP) ---
 
-    // Get the ranking result
-    const [ranking] = await db
-      .select()
-      .from(rankingResults)
-      .where(eq(rankingResults.id, rankingResultId));
+async function createPortfolioFromRanking(rankingResultId) {
+  const db = getDb();
 
-    if (!ranking) {
-      return res.status(404).json({ error: 'Ranking result not found' });
-    }
-    if (ranking.portfolioStatus === 'active') {
-      return res.status(400).json({ error: 'Portfolio already exists for this ranking' });
-    }
+  const [ranking] = await db
+    .select()
+    .from(rankingResults)
+    .where(eq(rankingResults.id, rankingResultId));
 
-    const results = JSON.parse(ranking.resultsJson);
-    const top5 = results.slice(0, 5);
-    if (top5.length === 0) {
-      return res.status(400).json({ error: 'No stocks to create portfolio from' });
-    }
+  if (!ranking) {
+    throw new Error('Ranking result not found');
+  }
+  if (ranking.portfolioStatus === 'active') {
+    throw new Error('Portfolio already exists for this ranking');
+  }
 
-    const today = getEasternDate();
-    const initialCapital = 100000;
-    const perStock = initialCapital / top5.length;
+  const results = JSON.parse(ranking.resultsJson);
+  const top5 = results.slice(0, 5);
+  if (top5.length === 0) {
+    throw new Error('No stocks to create portfolio from');
+  }
 
-    // Fetch current prices for top 5 stocks
-    const toDate = new Date().toISOString().slice(0, 10);
-    const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = getEasternDate();
+  const initialCapital = 100000;
+  const perStock = initialCapital / top5.length;
 
-    const holdings = [];
-    for (const stock of top5) {
-      try {
-        const bars = await fetchDailyBars(stock.ticker, fromDate, toDate);
-        const price = bars && bars.length > 0 ? bars[bars.length - 1].c : stock.indicators?.close;
-        if (!price) continue;
+  const toDate = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+  const holdingsList = [];
+  for (const stock of top5) {
+    try {
+      const bars = await fetchDailyBars(stock.ticker, fromDate, toDate);
+      const price = bars && bars.length > 0 ? bars[bars.length - 1].c : stock.indicators?.close;
+      if (!price) continue;
+
+      const shares = Math.floor((perStock / price) * 10000) / 10000;
+      holdingsList.push({
+        symbol: stock.ticker,
+        shares: shares.toString(),
+        entryPrice: price.toFixed(2),
+        currentPrice: price.toFixed(2),
+        gainLoss: '0',
+        gainLossPct: '0',
+      });
+    } catch (err) {
+      console.error(`Error fetching price for ${stock.ticker}:`, err.message);
+      const price = stock.indicators?.close;
+      if (price) {
         const shares = Math.floor((perStock / price) * 10000) / 10000;
-        holdings.push({
+        holdingsList.push({
           symbol: stock.ticker,
           shares: shares.toString(),
           entryPrice: price.toFixed(2),
@@ -55,188 +65,318 @@ router.post('/', async (req, res) => {
           gainLoss: '0',
           gainLossPct: '0',
         });
-      } catch (err) {
-        console.error(`Error fetching price for ${stock.ticker}:`, err.message);
-        // Use the close price from analysis
-        const price = stock.indicators?.close;
-        if (price) {
-          const shares = Math.floor((perStock / price) * 10000) / 10000;
-          holdings.push({
-            symbol: stock.ticker,
-            shares: shares.toString(),
-            entryPrice: price.toFixed(2),
-            currentPrice: price.toFixed(2),
-            gainLoss: '0',
-            gainLossPct: '0',
-          });
-        }
       }
-      // Small delay for rate limiting
-      await new Promise(r => setTimeout(r, 300));
     }
+    await new Promise(r => setTimeout(r, 300));
+  }
 
-    if (holdings.length === 0) {
-      return res.status(500).json({ error: 'Could not get prices for any stocks' });
-    }
+  if (holdingsList.length === 0) {
+    throw new Error('Could not get prices for any stocks');
+  }
 
-    // Create portfolio
-    const [portfolio] = await db
-      .insert(portfolios)
-      .values({
-        rankingResultId,
-        listName: ranking.listName,
-        status: 'active',
-        initialCapital: initialCapital.toFixed(2),
-        currentValue: initialCapital.toFixed(2),
-        totalGainLoss: '0',
-        totalGainLossPct: '0',
-        purchaseDate: today,
-        holdingDays: 30,
-      })
-      .returning();
-
-    // Create holdings
-    for (const h of holdings) {
-      await db.insert(portfolioHoldings).values({
-        portfolioId: portfolio.id,
-        ...h,
-      });
-    }
-
-    // Create initial snapshot
-    await db.insert(portfolioSnapshots).values({
-      portfolioId: portfolio.id,
-      snapshotDate: today,
-      totalValue: initialCapital.toFixed(2),
+  const [portfolio] = await db
+    .insert(portfolios)
+    .values({
+      rankingResultId,
+      listName: ranking.listName,
+      status: 'active',
+      initialCapital: initialCapital.toFixed(2),
+      currentValue: initialCapital.toFixed(2),
       totalGainLoss: '0',
       totalGainLossPct: '0',
-      holdingsJson: JSON.stringify(holdings),
-    });
+      purchaseDate: today,
+      holdingDays: 30,
+    })
+    .returning();
 
-    // Update ranking result with portfolio link
+  for (const h of holdingsList) {
+    await db.insert(portfolioHoldings).values({
+      portfolioId: portfolio.id,
+      ...h,
+    });
+  }
+
+  await db.insert(portfolioSnapshots).values({
+    portfolioId: portfolio.id,
+    snapshotDate: today,
+    totalValue: initialCapital.toFixed(2),
+    totalGainLoss: '0',
+    totalGainLossPct: '0',
+    holdingsJson: JSON.stringify(holdingsList),
+  });
+
+  await db
+    .update(rankingResults)
+    .set({ portfolioId: portfolio.id, portfolioStatus: 'active' })
+    .where(eq(rankingResults.id, rankingResultId));
+
+  return { success: true, portfolio: { ...portfolio, holdings: holdingsList } };
+}
+
+async function createEmaPortfolioFromAnalysis(emaAnalysisId) {
+  const db = getDb();
+
+  const [analysis] = await db
+    .select()
+    .from(emaAnalysis)
+    .where(eq(emaAnalysis.id, emaAnalysisId));
+
+  if (!analysis) {
+    throw new Error('EMA analysis not found');
+  }
+  if (analysis.portfolioStatus === 'active') {
+    throw new Error('EMA portfolio already exists for this analysis');
+  }
+
+  const stockAnalysisArr = JSON.parse(analysis.stockAnalysis);
+
+  const sorted = stockAnalysisArr
+    .map(s => ({
+      ...s,
+      star_rating: s.star_rating || _parseStarRating(s.ranking_formatted),
+    }))
+    .sort((a, b) => (b.star_rating || 0) - (a.star_rating || 0));
+
+  const top5 = sorted.slice(0, 5);
+  if (top5.length === 0) {
+    throw new Error('No stocks to create EMA portfolio from');
+  }
+
+  const today = getEasternDate();
+  const initialCapital = 100000;
+  const perStock = initialCapital / top5.length;
+
+  const toDate = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const holdingsList = [];
+  for (const stock of top5) {
+    try {
+      const bars = await fetchDailyBars(stock.symbol, fromDate, toDate);
+      const price = bars && bars.length > 0 ? bars[bars.length - 1].c : null;
+      if (!price) continue;
+
+      const shares = Math.floor((perStock / price) * 10000) / 10000;
+      holdingsList.push({
+        symbol: stock.symbol,
+        shares: shares.toString(),
+        entryPrice: price.toFixed(2),
+        currentPrice: price.toFixed(2),
+        gainLoss: '0',
+        gainLossPct: '0',
+      });
+    } catch (err) {
+      console.error(`Error fetching price for ${stock.symbol}:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  if (holdingsList.length === 0) {
+    throw new Error('Could not get prices for any EMA stocks');
+  }
+
+  const [portfolio] = await db
+    .insert(portfolios)
+    .values({
+      rankingResultId: analysis.scanResultId,
+      listName: `${analysis.listName}_ema`,
+      status: 'active',
+      initialCapital: initialCapital.toFixed(2),
+      currentValue: initialCapital.toFixed(2),
+      totalGainLoss: '0',
+      totalGainLossPct: '0',
+      purchaseDate: today,
+      holdingDays: 30,
+    })
+    .returning();
+
+  for (const h of holdingsList) {
+    await db.insert(portfolioHoldings).values({
+      portfolioId: portfolio.id,
+      ...h,
+    });
+  }
+
+  await db.insert(portfolioSnapshots).values({
+    portfolioId: portfolio.id,
+    snapshotDate: today,
+    totalValue: initialCapital.toFixed(2),
+    totalGainLoss: '0',
+    totalGainLossPct: '0',
+    holdingsJson: JSON.stringify(holdingsList),
+  });
+
+  await db
+    .update(emaAnalysis)
+    .set({ portfolioId: portfolio.id, portfolioStatus: 'active' })
+    .where(eq(emaAnalysis.id, emaAnalysisId));
+
+  return { success: true, portfolio: { ...portfolio, holdings: holdingsList } };
+}
+
+async function updatePortfolioPricesService(portfolioId) {
+  const db = getDb();
+
+  const [portfolio] = await db
+    .select()
+    .from(portfolios)
+    .where(eq(portfolios.id, portfolioId));
+
+  if (!portfolio) {
+    throw new Error('Portfolio not found');
+  }
+
+  const holdingsRows = await db
+    .select()
+    .from(portfolioHoldings)
+    .where(eq(portfolioHoldings.portfolioId, portfolioId));
+
+  const toDate = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  let totalValue = 0;
+  const updatedHoldings = [];
+
+  for (const holding of holdingsRows) {
+    try {
+      const bars = await fetchDailyBars(holding.symbol, fromDate, toDate);
+      const currentPrice = bars && bars.length > 0 ? bars[bars.length - 1].c : parseFloat(holding.currentPrice);
+
+      const entryPrice = parseFloat(holding.entryPrice);
+      const shares = parseFloat(holding.shares);
+      const holdingValue = shares * currentPrice;
+      const gainLoss = holdingValue - (shares * entryPrice);
+      const gainLossPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+
+      totalValue += holdingValue;
+
+      await db
+        .update(portfolioHoldings)
+        .set({
+          currentPrice: currentPrice.toFixed(2),
+          gainLoss: gainLoss.toFixed(2),
+          gainLossPct: gainLossPct.toFixed(4),
+          lastUpdatedAt: new Date(),
+        })
+        .where(eq(portfolioHoldings.id, holding.id));
+
+      updatedHoldings.push({
+        ...holding,
+        currentPrice: currentPrice.toFixed(2),
+        gainLoss: gainLoss.toFixed(2),
+        gainLossPct: gainLossPct.toFixed(4),
+      });
+    } catch (err) {
+      console.error(`Error updating price for ${holding.symbol}:`, err.message);
+      totalValue += parseFloat(holding.shares) * parseFloat(holding.currentPrice);
+      updatedHoldings.push(holding);
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  const initialCapital = parseFloat(portfolio.initialCapital);
+  const totalGainLoss = totalValue - initialCapital;
+  const totalGainLossPct = initialCapital > 0 ? (totalGainLoss / initialCapital) * 100 : 0;
+
+  const purchaseDate = new Date(portfolio.purchaseDate + 'T00:00:00-05:00');
+  const closeTarget = new Date(purchaseDate);
+  closeTarget.setDate(closeTarget.getDate() + (portfolio.holdingDays || 30));
+  const shouldClose = new Date() >= closeTarget;
+
+  const newStatus = shouldClose ? 'closed' : 'active';
+  const today = getEasternDate();
+
+  await db
+    .update(portfolios)
+    .set({
+      currentValue: totalValue.toFixed(2),
+      totalGainLoss: totalGainLoss.toFixed(2),
+      totalGainLossPct: totalGainLossPct.toFixed(4),
+      status: newStatus,
+      closeDate: shouldClose ? today : null,
+      lastUpdatedAt: new Date(),
+    })
+    .where(eq(portfolios.id, portfolioId));
+
+  const [existingSnapshot] = await db
+    .select()
+    .from(portfolioSnapshots)
+    .where(and(
+      eq(portfolioSnapshots.portfolioId, portfolioId),
+      eq(portfolioSnapshots.snapshotDate, today)
+    ));
+
+  if (existingSnapshot) {
+    await db
+      .update(portfolioSnapshots)
+      .set({
+        totalValue: totalValue.toFixed(2),
+        totalGainLoss: totalGainLoss.toFixed(2),
+        totalGainLossPct: totalGainLossPct.toFixed(4),
+        holdingsJson: JSON.stringify(updatedHoldings),
+      })
+      .where(eq(portfolioSnapshots.id, existingSnapshot.id));
+  } else {
+    await db.insert(portfolioSnapshots).values({
+      portfolioId,
+      snapshotDate: today,
+      totalValue: totalValue.toFixed(2),
+      totalGainLoss: totalGainLoss.toFixed(2),
+      totalGainLossPct: totalGainLossPct.toFixed(4),
+      holdingsJson: JSON.stringify(updatedHoldings),
+    });
+  }
+
+  if (shouldClose) {
     await db
       .update(rankingResults)
-      .set({ portfolioId: portfolio.id, portfolioStatus: 'active' })
-      .where(eq(rankingResults.id, rankingResultId));
+      .set({ portfolioStatus: 'closed' })
+      .where(eq(rankingResults.portfolioId, portfolioId));
+  }
 
-    res.json({ success: true, portfolio: { ...portfolio, holdings } });
+  const snapshots = await db
+    .select()
+    .from(portfolioSnapshots)
+    .where(eq(portfolioSnapshots.portfolioId, portfolioId))
+    .orderBy(portfolioSnapshots.snapshotDate);
+
+  return {
+    success: true,
+    portfolio: {
+      ...portfolio,
+      currentValue: totalValue.toFixed(2),
+      totalGainLoss: totalGainLoss.toFixed(2),
+      totalGainLossPct: totalGainLossPct.toFixed(4),
+      status: newStatus,
+    },
+    holdings: updatedHoldings,
+    snapshots,
+  };
+}
+
+// --- Route handlers (thin wrappers around service functions) ---
+
+// Create portfolio from top 5 stocks of a ranking result
+router.post('/', async (req, res) => {
+  try {
+    const result = await createPortfolioFromRanking(req.body.rankingResultId);
+    res.json(result);
   } catch (err) {
     console.error('Error creating portfolio:', err);
-    res.status(500).json({ error: err.message });
+    const status = err.message.includes('not found') ? 404 : err.message.includes('already exists') ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
 // Create EMA portfolio from top 5 stocks by Gemini star rating
 router.post('/ema', async (req, res) => {
   try {
-    const db = getDb();
-    const { emaAnalysisId } = req.body;
-
-    // Get the EMA analysis
-    const [analysis] = await db
-      .select()
-      .from(emaAnalysis)
-      .where(eq(emaAnalysis.id, emaAnalysisId));
-
-    if (!analysis) {
-      return res.status(404).json({ error: 'EMA analysis not found' });
-    }
-    if (analysis.portfolioStatus === 'active') {
-      return res.status(400).json({ error: 'EMA portfolio already exists for this analysis' });
-    }
-
-    const stockAnalysisArr = JSON.parse(analysis.stockAnalysis);
-
-    // Sort by star_rating (descending) and take top 5
-    const sorted = stockAnalysisArr
-      .map(s => ({
-        ...s,
-        star_rating: s.star_rating || _parseStarRating(s.ranking_formatted),
-      }))
-      .sort((a, b) => (b.star_rating || 0) - (a.star_rating || 0));
-
-    const top5 = sorted.slice(0, 5);
-    if (top5.length === 0) {
-      return res.status(400).json({ error: 'No stocks to create EMA portfolio from' });
-    }
-
-    const today = getEasternDate();
-    const initialCapital = 100000;
-    const perStock = initialCapital / top5.length;
-
-    const toDate = new Date().toISOString().slice(0, 10);
-    const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-    const holdings = [];
-    for (const stock of top5) {
-      try {
-        const bars = await fetchDailyBars(stock.symbol, fromDate, toDate);
-        const price = bars && bars.length > 0 ? bars[bars.length - 1].c : null;
-        if (!price) continue;
-
-        const shares = Math.floor((perStock / price) * 10000) / 10000;
-        holdings.push({
-          symbol: stock.symbol,
-          shares: shares.toString(),
-          entryPrice: price.toFixed(2),
-          currentPrice: price.toFixed(2),
-          gainLoss: '0',
-          gainLossPct: '0',
-        });
-      } catch (err) {
-        console.error(`Error fetching price for ${stock.symbol}:`, err.message);
-      }
-      await new Promise(r => setTimeout(r, 300));
-    }
-
-    if (holdings.length === 0) {
-      return res.status(500).json({ error: 'Could not get prices for any EMA stocks' });
-    }
-
-    // Create portfolio (using a synthetic ranking result ID based on the analysis)
-    const [portfolio] = await db
-      .insert(portfolios)
-      .values({
-        rankingResultId: analysis.scanResultId, // Link to scan result
-        listName: `${analysis.listName}_ema`,
-        status: 'active',
-        initialCapital: initialCapital.toFixed(2),
-        currentValue: initialCapital.toFixed(2),
-        totalGainLoss: '0',
-        totalGainLossPct: '0',
-        purchaseDate: today,
-        holdingDays: 30,
-      })
-      .returning();
-
-    // Create holdings
-    for (const h of holdings) {
-      await db.insert(portfolioHoldings).values({
-        portfolioId: portfolio.id,
-        ...h,
-      });
-    }
-
-    // Create initial snapshot
-    await db.insert(portfolioSnapshots).values({
-      portfolioId: portfolio.id,
-      snapshotDate: today,
-      totalValue: initialCapital.toFixed(2),
-      totalGainLoss: '0',
-      totalGainLossPct: '0',
-      holdingsJson: JSON.stringify(holdings),
-    });
-
-    // Update EMA analysis with portfolio link
-    await db
-      .update(emaAnalysis)
-      .set({ portfolioId: portfolio.id, portfolioStatus: 'active' })
-      .where(eq(emaAnalysis.id, emaAnalysisId));
-
-    res.json({ success: true, portfolio: { ...portfolio, holdings } });
+    const result = await createEmaPortfolioFromAnalysis(req.body.emaAnalysisId);
+    res.json(result);
   } catch (err) {
     console.error('Error creating EMA portfolio:', err);
-    res.status(500).json({ error: err.message });
+    const status = err.message.includes('not found') ? 404 : err.message.includes('already exists') ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -352,152 +492,13 @@ router.get('/:id', async (req, res) => {
 // Update prices for a portfolio
 router.post('/:id/update-prices', async (req, res) => {
   try {
-    const db = getDb();
     const portfolioId = parseInt(req.params.id);
-
-    const [portfolio] = await db
-      .select()
-      .from(portfolios)
-      .where(eq(portfolios.id, portfolioId));
-
-    if (!portfolio) {
-      return res.status(404).json({ error: 'Portfolio not found' });
-    }
-
-    const holdings = await db
-      .select()
-      .from(portfolioHoldings)
-      .where(eq(portfolioHoldings.portfolioId, portfolioId));
-
-    const toDate = new Date().toISOString().slice(0, 10);
-    const fromDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-    let totalValue = 0;
-    const updatedHoldings = [];
-
-    for (const holding of holdings) {
-      try {
-        const bars = await fetchDailyBars(holding.symbol, fromDate, toDate);
-        const currentPrice = bars && bars.length > 0 ? bars[bars.length - 1].c : parseFloat(holding.currentPrice);
-
-        const entryPrice = parseFloat(holding.entryPrice);
-        const shares = parseFloat(holding.shares);
-        const holdingValue = shares * currentPrice;
-        const gainLoss = holdingValue - (shares * entryPrice);
-        const gainLossPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
-
-        totalValue += holdingValue;
-
-        await db
-          .update(portfolioHoldings)
-          .set({
-            currentPrice: currentPrice.toFixed(2),
-            gainLoss: gainLoss.toFixed(2),
-            gainLossPct: gainLossPct.toFixed(4),
-            lastUpdatedAt: new Date(),
-          })
-          .where(eq(portfolioHoldings.id, holding.id));
-
-        updatedHoldings.push({
-          ...holding,
-          currentPrice: currentPrice.toFixed(2),
-          gainLoss: gainLoss.toFixed(2),
-          gainLossPct: gainLossPct.toFixed(4),
-        });
-      } catch (err) {
-        console.error(`Error updating price for ${holding.symbol}:`, err.message);
-        totalValue += parseFloat(holding.shares) * parseFloat(holding.currentPrice);
-        updatedHoldings.push(holding);
-      }
-      await new Promise(r => setTimeout(r, 300));
-    }
-
-    const initialCapital = parseFloat(portfolio.initialCapital);
-    const totalGainLoss = totalValue - initialCapital;
-    const totalGainLossPct = initialCapital > 0 ? (totalGainLoss / initialCapital) * 100 : 0;
-
-    // Check if 30 days have passed
-    const purchaseDate = new Date(portfolio.purchaseDate + 'T00:00:00-05:00');
-    const closeTarget = new Date(purchaseDate);
-    closeTarget.setDate(closeTarget.getDate() + (portfolio.holdingDays || 30));
-    const shouldClose = new Date() >= closeTarget;
-
-    const newStatus = shouldClose ? 'closed' : 'active';
-    const today = getEasternDate();
-
-    // Update portfolio
-    await db
-      .update(portfolios)
-      .set({
-        currentValue: totalValue.toFixed(2),
-        totalGainLoss: totalGainLoss.toFixed(2),
-        totalGainLossPct: totalGainLossPct.toFixed(4),
-        status: newStatus,
-        closeDate: shouldClose ? today : null,
-        lastUpdatedAt: new Date(),
-      })
-      .where(eq(portfolios.id, portfolioId));
-
-    // Save daily snapshot (upsert for today)
-    const [existingSnapshot] = await db
-      .select()
-      .from(portfolioSnapshots)
-      .where(and(
-        eq(portfolioSnapshots.portfolioId, portfolioId),
-        eq(portfolioSnapshots.snapshotDate, today)
-      ));
-
-    if (existingSnapshot) {
-      await db
-        .update(portfolioSnapshots)
-        .set({
-          totalValue: totalValue.toFixed(2),
-          totalGainLoss: totalGainLoss.toFixed(2),
-          totalGainLossPct: totalGainLossPct.toFixed(4),
-          holdingsJson: JSON.stringify(updatedHoldings),
-        })
-        .where(eq(portfolioSnapshots.id, existingSnapshot.id));
-    } else {
-      await db.insert(portfolioSnapshots).values({
-        portfolioId,
-        snapshotDate: today,
-        totalValue: totalValue.toFixed(2),
-        totalGainLoss: totalGainLoss.toFixed(2),
-        totalGainLossPct: totalGainLossPct.toFixed(4),
-        holdingsJson: JSON.stringify(updatedHoldings),
-      });
-    }
-
-    // Update related ranking result status if closed
-    if (shouldClose) {
-      await db
-        .update(rankingResults)
-        .set({ portfolioStatus: 'closed' })
-        .where(eq(rankingResults.portfolioId, portfolioId));
-    }
-
-    // Return full portfolio data
-    const snapshots = await db
-      .select()
-      .from(portfolioSnapshots)
-      .where(eq(portfolioSnapshots.portfolioId, portfolioId))
-      .orderBy(portfolioSnapshots.snapshotDate);
-
-    res.json({
-      success: true,
-      portfolio: {
-        ...portfolio,
-        currentValue: totalValue.toFixed(2),
-        totalGainLoss: totalGainLoss.toFixed(2),
-        totalGainLossPct: totalGainLossPct.toFixed(4),
-        status: newStatus,
-      },
-      holdings: updatedHoldings,
-      snapshots,
-    });
+    const result = await updatePortfolioPricesService(portfolioId);
+    res.json(result);
   } catch (err) {
     console.error('Error updating prices:', err);
-    res.status(500).json({ error: err.message });
+    const status = err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -516,4 +517,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = {
+  router,
+  createPortfolioFromRanking,
+  createEmaPortfolioFromAnalysis,
+  updatePortfolioPricesService,
+};

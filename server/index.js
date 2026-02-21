@@ -1,22 +1,54 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const cron = require('node-cron');
 const { getDb } = require('./db');
 const { isTradingDayToday, scheduleEastern } = require('./trading-calendar');
+const { handleAuthHandoff, requireAuth } = require('./auth');
+
+// --- Startup validation: auth env vars are always required ---
+const REQUIRED_AUTH_VARS = ['PREMIUM_TOKEN_SECRET', 'JWT_SECRET', 'MEMBER_PORTAL_URL'];
+for (const varName of REQUIRED_AUTH_VARS) {
+  if (!process.env[varName]) {
+    throw new Error(`Missing required environment variable: ${varName}`);
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Middleware
+app.use(cookieParser());
+app.use(cors({
+  origin: process.env.MEMBER_PORTAL_URL,
+  credentials: true,
+}));
 app.use(express.json());
+
+// Auth handoff route (before auth middleware — no session required)
+app.get('/auth/handoff', handleAuthHandoff);
+
+// Health check (before auth middleware — no session required)
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    apiKeySet: !!process.env.MASSIVE_STOCK_API_KEY,
+    dbSet: !!process.env.DATABASE_URL,
+    geminiKeySet: !!process.env.GEMINI_API_KEY,
+    stockchartsSet: !!(process.env.STOCKCHARTS_USERNAME && process.env.STOCKCHARTS_PASSWORD),
+  });
+});
+
+// Auth middleware: all /api/* routes below this require a valid session
+app.use('/api', requireAuth);
 
 // Import routes
 const { router: analysisRouter } = require('./routes/analysis');
 const rankingsRouter = require('./routes/rankings');
-const portfoliosRouter = require('./routes/portfolios');
-const automationRouter = require('./routes/automation');
+const { router: portfoliosRouter } = require('./routes/portfolios');
+const { router: automationRouter } = require('./routes/automation');
 const emaAnalysisRouter = require('./routes/ema-analysis');
 
 // API routes
@@ -29,17 +61,6 @@ app.use('/api/ema-analysis', emaAnalysisRouter);
 // Serve EMA scan data files (images, CSVs) from data directory
 const dataDir = process.env.DATA_DIR || '/data';
 app.use('/api/scan-data', express.static(dataDir));
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    apiKeySet: !!process.env.MASSIVE_STOCK_API_KEY,
-    dbSet: !!process.env.DATABASE_URL,
-    geminiKeySet: !!process.env.GEMINI_API_KEY,
-    stockchartsSet: !!(process.env.STOCKCHARTS_USERNAME && process.env.STOCKCHARTS_PASSWORD),
-  });
-});
 
 // Serve React build in production
 const distPath = path.join(__dirname, '../dist');
@@ -155,12 +176,15 @@ async function start() {
     });
 
     // ----- DST-aware, trading-day-guarded cron schedules -----
-    // scheduleEastern() converts Eastern times to UTC and auto-reschedules on DST transitions.
-    // Each handler skips execution on market holidays.
+    // Cron jobs call service functions directly (no internal HTTP calls).
+    // This avoids auth conflicts since requireAuth only applies to HTTP requests.
+
+    const { runDailyWorkflowService } = require('./routes/automation');
+    const { updatePortfolioPricesService } = require('./routes/portfolios');
+    const { portfolios: portfoliosTable } = require('./schema');
+    const { eq } = require('drizzle-orm');
 
     // Daily workflow at 10:00 AM Eastern (Mon-Tue only, skips holidays)
-    // Lists are typically updated on Monday or Tuesday. Each list is independent:
-    // check for new updates → download & analyze → create portfolios.
     scheduleEastern(cron, 10, 0, '1-2', async () => {
       if (!isTradingDayToday()) {
         console.log('Skipping daily workflow: market is closed today (holiday)');
@@ -168,11 +192,7 @@ async function start() {
       }
       console.log('Running daily workflow...');
       try {
-        const fetch = globalThis.fetch || (await import('node-fetch')).default;
-        const response = await fetch(`http://localhost:${PORT}/api/automation/daily-workflow`, {
-          method: 'POST',
-        });
-        const result = await response.json();
+        const result = await runDailyWorkflowService();
         console.log(`Daily workflow complete. Portfolios created: ${result.portfoliosCreated?.length || 0}`);
       } catch (err) {
         console.error('Daily workflow failed:', err.message);
@@ -188,8 +208,6 @@ async function start() {
       console.log('Running scheduled price update...');
       try {
         const db = getDb();
-        const { portfolios: portfoliosTable } = require('./schema');
-        const { eq } = require('drizzle-orm');
         const activePortfolios = await db
           .select()
           .from(portfoliosTable)
@@ -197,10 +215,7 @@ async function start() {
 
         for (const p of activePortfolios) {
           try {
-            const fetch = globalThis.fetch || (await import('node-fetch')).default;
-            await fetch(`http://localhost:${PORT}/api/portfolios/${p.id}/update-prices`, {
-              method: 'POST',
-            });
+            await updatePortfolioPricesService(p.id);
             console.log(`Updated prices for portfolio ${p.id}`);
           } catch (err) {
             console.error(`Failed to update portfolio ${p.id}:`, err.message);
