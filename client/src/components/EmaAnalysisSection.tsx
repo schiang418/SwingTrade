@@ -16,6 +16,14 @@ const BUCKET_STYLES: Record<string, { bg: string; border: string; text: string; 
   bucket_3: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400', label: 'Under Observation' },
 };
 
+function formatChartlistName(name: string): string {
+  // Remove leading numeric count prefix (e.g., "105 - " or "107 - ")
+  let cleaned = name.replace(/^\d+\s*-\s*/, '');
+  // Remove "Matt's " prefix (e.g., "Matt's Hot Stocks" → "Hot Stocks")
+  cleaned = cleaned.replace(/^Matt's\s+/i, '');
+  return cleaned;
+}
+
 function getStarRating(stock: EmaStockAnalysis): number {
   if (stock.star_rating) return stock.star_rating;
   const stars = (stock.ranking_formatted?.match(/★/g) || []).length;
@@ -84,7 +92,7 @@ export default function EmaAnalysisSection({ listName, analysisDate }: Props) {
         <div className="flex items-center gap-3 mb-4 text-xs text-[#8b8fa3]">
           <span>{data.scanResult.stockCount} stocks passed EMA filter</span>
           {data.scanResult.chartlistName && (
-            <span>| {data.scanResult.chartlistName}</span>
+            <span>| {formatChartlistName(data.scanResult.chartlistName)}</span>
           )}
         </div>
       )}
