@@ -46,7 +46,7 @@ router.get('/:listName', async (req, res) => {
       listUpdateDate: result.listUpdateDate,
       results,
       spyData: result.spyDataJson ? JSON.parse(result.spyDataJson) : null,
-      stockCount: result.stockCount,
+      stockCount: result.listName === 'leading_stocks' ? Math.min(result.stockCount, MAX_LEADING_STOCKS) : result.stockCount,
       analyzedAt: result.analyzedAt,
       portfolioId: result.portfolioId,
       portfolioStatus: result.portfolioStatus,

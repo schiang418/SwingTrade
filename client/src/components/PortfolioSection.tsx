@@ -186,7 +186,7 @@ export default function PortfolioSection({
               text-white rounded-lg font-semibold text-sm transition-all"
           >
             <Eye className="w-4 h-4" />
-            View 20d EMA Pullback Portfolio
+            View Portfolio Details
           </button>
         </div>
       );
