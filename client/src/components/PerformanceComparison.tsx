@@ -11,10 +11,10 @@ interface Props {
 }
 
 const STRATEGY_CONFIG: Record<string, { label: string; color: string; shortLabel: string }> = {
-  leading_stocks: { label: 'Leading Stocks - Ranking', color: '#4f8ff7', shortLabel: 'LS Rank' },
-  leading_stocks_ema: { label: 'Leading Stocks - EMA', color: '#22d3ee', shortLabel: 'LS EMA' },
-  hot_stocks: { label: "Hot Stocks - Ranking", color: '#f59e0b', shortLabel: 'HS Rank' },
-  hot_stocks_ema: { label: "Hot Stocks - EMA", color: '#ef4444', shortLabel: 'HS EMA' },
+  leading_stocks: { label: 'Leading Stocks - Ranking Algorithm', color: '#4f8ff7', shortLabel: 'LS Ranking' },
+  leading_stocks_ema: { label: 'Leading Stocks - 20d EMA Pullback', color: '#22d3ee', shortLabel: 'LS 20d EMA' },
+  hot_stocks: { label: 'Hot Stocks - Ranking Algorithm', color: '#f59e0b', shortLabel: 'HS Ranking' },
+  hot_stocks_ema: { label: 'Hot Stocks - 20d EMA Pullback', color: '#ef4444', shortLabel: 'HS 20d EMA' },
 };
 
 function fmtMoney(val: number) {
@@ -201,7 +201,7 @@ export default function PerformanceComparison({ onClose }: Props) {
 
         <h2 className="text-xl font-bold mb-1">Strategy Performance Comparison</h2>
         <p className="text-sm text-[#8b8fa3] mb-6">
-          Comparing 2 lists x 2 strategies: Proprietary Ranking vs 20-Day EMA Pullback
+          Comparing 2 lists x 2 strategies: Ranking Algorithm vs 20d EMA Pullback
         </p>
 
         {loading && (

@@ -56,7 +56,7 @@ export default function PortfolioSection({
         try {
           await createEmaPortfolio(emaData.id);
           await refreshEmaData();
-          showToast('Both Ranking and EMA portfolios created!');
+          showToast('Both Ranking Algorithm and 20d EMA Pullback portfolios created!');
         } catch (emaErr: any) {
           showToast('Ranking portfolio created! EMA portfolio: ' + emaErr.message, 'error');
         }
@@ -78,7 +78,7 @@ export default function PortfolioSection({
     try {
       await createEmaPortfolio(emaData.id);
       await refreshEmaData();
-      showToast('EMA Portfolio created with top 5 stocks by star rating!');
+      showToast('20d EMA Pullback Portfolio created with top 5 stocks by star rating!');
       onChange();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -95,11 +95,11 @@ export default function PortfolioSection({
   const emaAnalysisId = emaData?.id ?? null;
 
   const buttonLabel = emaAnalysisId
-    ? 'Create Portfolios (Ranking + EMA)'
+    ? 'Create Portfolios (Ranking Algorithm + 20d EMA Pullback)'
     : 'Create Portfolio';
 
   const buttonDescription = emaAnalysisId
-    ? 'Create virtual $100K portfolios: Ranking (top 5 by score) + EMA (top 5 by star rating)'
+    ? 'Create virtual $100K portfolios: Ranking Algorithm (top 5 by score) + 20d EMA Pullback (top 5 by star rating)'
     : 'Create a virtual $100K portfolio with the top 5 ranked stocks';
 
   // Helper to render ranking portfolio card
@@ -109,7 +109,7 @@ export default function PortfolioSection({
         <div className="flex-1 bg-green-500/5 border border-green-500/20 rounded-xl p-4">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-green-400 font-semibold text-sm">Ranking Portfolio Active</span>
+            <span className="text-green-400 font-semibold text-sm">Ranking Algorithm Portfolio Active</span>
           </div>
           <button
             onClick={() => setDialogOpen(true)}
@@ -127,7 +127,7 @@ export default function PortfolioSection({
       <div className="flex-1 bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-3 h-3 bg-gray-500 rounded-full" />
-          <span className="text-[#8b8fa3] font-semibold text-sm">Ranking Portfolio Closed</span>
+          <span className="text-[#8b8fa3] font-semibold text-sm">Ranking Algorithm Portfolio Closed</span>
         </div>
         <button
           onClick={() => setDialogOpen(true)}
@@ -149,7 +149,7 @@ export default function PortfolioSection({
       return (
         <div className="flex-1 bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
           <p className="text-[#8b8fa3] text-sm mb-2">
-            Create a virtual $100K EMA portfolio with the top 5 stocks by star rating
+            Create a virtual $100K 20d EMA Pullback portfolio with the top 5 stocks by star rating
           </p>
           <button
             onClick={handleCreateEma}
@@ -165,7 +165,7 @@ export default function PortfolioSection({
             ) : (
               <>
                 <Star className="w-4 h-4" />
-                Create EMA Portfolio
+                Create 20d EMA Pullback Portfolio
               </>
             )}
           </button>
@@ -178,7 +178,7 @@ export default function PortfolioSection({
         <div className="flex-1 bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-3 h-3 bg-purple-500 rounded-full animate-pulse" />
-            <span className="text-purple-400 font-semibold text-sm">EMA Portfolio Active</span>
+            <span className="text-purple-400 font-semibold text-sm">20d EMA Pullback Portfolio Active</span>
           </div>
           <button
             onClick={() => setEmaDialogOpen(true)}
@@ -186,7 +186,7 @@ export default function PortfolioSection({
               text-white rounded-lg font-semibold text-sm transition-all"
           >
             <Eye className="w-4 h-4" />
-            View EMA Portfolio
+            View 20d EMA Pullback Portfolio
           </button>
         </div>
       );
@@ -197,7 +197,7 @@ export default function PortfolioSection({
       <div className="flex-1 bg-[#1a1d27] border border-[#2a2e3a] rounded-xl p-4">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-3 h-3 bg-gray-500 rounded-full" />
-          <span className="text-[#8b8fa3] font-semibold text-sm">EMA Portfolio Closed</span>
+          <span className="text-[#8b8fa3] font-semibold text-sm">20d EMA Pullback Portfolio Closed</span>
         </div>
         <button
           onClick={() => setEmaDialogOpen(true)}

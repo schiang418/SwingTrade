@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ChevronLeft, ChevronRight, RefreshCw, Download, Upload, TrendingUp, Loader2,
-  BarChart3,
+  BarChart3, ArrowLeft,
 } from 'lucide-react';
 import {
   fetchRanking, fetchDates, triggerCheckAndDownload, triggerForceAnalysis,
@@ -20,6 +20,9 @@ const TAB_LABELS: Record<ListName, string> = {
   leading_stocks: 'Leading Stocks',
   hot_stocks: 'Hot Stocks',
 };
+
+const MEMBER_PORTAL_URL = import.meta.env.VITE_MEMBER_PORTAL_URL || 'https://portal.cyclescope.com';
+const MANUAL_TRIGGER = import.meta.env.VITE_MANUAL_TRIGGER === 'true';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ListName>('leading_stocks');
@@ -150,207 +153,230 @@ export default function App() {
   const currentDate = dates[currentDateIdx];
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 py-6">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium
-          ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
-          {toast.message}
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="text-center mb-8">
-        <h1 className="text-2xl font-bold mb-1">Swing Trade Ranking System</h1>
-        <p className="text-[#8b8fa3] text-sm">Automated EarningsBeats analysis with portfolio tracking</p>
-      </header>
-
-      {/* Controls Row */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        {/* Tabs */}
-        <div className="flex bg-[#1a1d27] rounded-lg p-1">
-          {(Object.entries(TAB_LABELS) as [ListName, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => handleTabChange(key)}
-              className={`px-4 py-2 rounded-md text-sm font-semibold transition-all
-                ${activeTab === key
-                  ? 'bg-[#4f8ff7] text-white'
-                  : 'text-[#8b8fa3] hover:text-white'
-                }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex-1" />
-
-        {/* Check for Updates */}
-        <button
-          onClick={handleCheckAndDownload}
-          disabled={automationLoading || forceLoading}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
-            border border-[#2a2e3a] rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+    <div className="min-h-screen">
+      {/* Top Nav Bar */}
+      <nav className="bg-[#0c0e14] border-b border-[#2a2e3a] px-4 py-3 flex items-center">
+        <a
+          href={MEMBER_PORTAL_URL}
+          className="flex items-center gap-1.5 text-[#8b8fa3] hover:text-white text-sm font-medium transition-colors"
         >
-          {automationLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Download className="w-4 h-4" />
-          )}
-          {automationLoading ? 'Checking...' : 'Check for Updates'}
-        </button>
-
-        {/* Force Analysis */}
-        <button
-          onClick={handleForceAnalysis}
-          disabled={automationLoading || forceLoading}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
-            border border-orange-500/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50
-            text-orange-400 hover:text-orange-300"
-        >
-          {forceLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          {forceLoading ? 'Analyzing...' : 'Force Analysis'}
-        </button>
-
-        {/* Compare Performance */}
-        <button
-          onClick={() => setShowComparison(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
-            border border-purple-500/30 rounded-lg text-sm font-medium transition-all
-            text-purple-400 hover:text-purple-300"
-        >
-          <BarChart3 className="w-4 h-4" />
-          Compare Performance
-        </button>
-      </div>
-
-      {/* Date Navigation */}
-      {dates.length > 0 && (
-        <div className="flex items-center justify-center gap-4 mb-6">
-          <button
-            onClick={handlePrevDate}
-            disabled={currentDateIdx >= dates.length - 1 || loading}
-            className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
-              disabled:opacity-30 transition-all"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-
-          <div className="text-center min-w-[200px]">
-            <div className="text-lg font-bold">{currentDate?.analysisDate}</div>
-            {currentDate?.listUpdateDate && (
-              <div className="text-xs text-[#8b8fa3]">
-                List update: {currentDate.listUpdateDate}
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={handleNextDate}
-            disabled={currentDateIdx <= 0 || loading}
-            className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
-              disabled:opacity-30 transition-all"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-
-          <span className="text-xs text-[#8b8fa3]">
-            {currentDateIdx + 1} of {dates.length}
+          <ArrowLeft className="w-4 h-4" />
+          CycleScope Portal
+        </a>
+        <div className="flex-1 text-center">
+          <span className="text-white font-bold text-lg tracking-tight">
+            StockScope Swing Trade Strategy
           </span>
         </div>
-      )}
+        <div className="w-[140px]" />
+      </nav>
 
-      {/* Loading */}
-      {loading && (
-        <div className="text-center py-16">
-          <Loader2 className="w-10 h-10 animate-spin text-[#4f8ff7] mx-auto mb-4" />
-          <p className="text-[#8b8fa3]">Loading rankings...</p>
-        </div>
-      )}
+      <div className="max-w-[1400px] mx-auto px-4 py-6">
+        {/* Toast */}
+        {toast && (
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium
+            ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+            {toast.message}
+          </div>
+        )}
 
-      {/* Error */}
-      {error && (
-        <div className="text-center py-16 text-red-400">
-          <p>{error}</p>
-        </div>
-      )}
+        {/* Header */}
+        <header className="text-center mb-8">
+          <h1 className="text-2xl font-bold mb-1">Stock Swing Trade Strategy</h1>
+          <p className="text-[#8b8fa3] text-sm">Automated stock analysis with portfolio tracking</p>
+        </header>
 
-      {/* No Data */}
-      {!loading && !error && !ranking?.found && (
-        <div className="text-center py-16">
-          <TrendingUp className="w-12 h-12 text-[#2a2e3a] mx-auto mb-4" />
-          <p className="text-[#8b8fa3] mb-2">No ranking data available for {TAB_LABELS[activeTab]}</p>
-          <p className="text-[#8b8fa3] text-sm">
-            Click "Check for Updates" to download and analyze the latest data from EarningsBeats
-          </p>
-        </div>
-      )}
-
-      {/* Results */}
-      {!loading && ranking?.found && (
-        <>
-          {/* SPY Info + Meta */}
-          <div className="flex items-center gap-4 mb-4 text-xs text-[#8b8fa3]">
-            {ranking.spyData && (
-              <span>
-                SPY: 1M {ranking.spyData.return1m >= 0 ? '+' : ''}{ranking.spyData.return1m.toFixed(1)}%
-                {' | '}
-                3M {ranking.spyData.return3m >= 0 ? '+' : ''}{ranking.spyData.return3m.toFixed(1)}%
-              </span>
-            )}
-            <span>{ranking.stockCount} stocks analyzed</span>
+        {/* Controls Row */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          {/* Tabs */}
+          <div className="flex bg-[#1a1d27] rounded-lg p-1">
+            {(Object.entries(TAB_LABELS) as [ListName, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => handleTabChange(key)}
+                className={`px-4 py-2 rounded-md text-sm font-semibold transition-all
+                  ${activeTab === key
+                    ? 'bg-[#4f8ff7] text-white'
+                    : 'text-[#8b8fa3] hover:text-white'
+                  }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          {/* Legend */}
-          <div className="flex gap-3 mb-4 flex-wrap">
-            <span className="px-3 py-1 rounded text-xs font-semibold bg-green-500/10 text-green-500">85-100: Prime Entry</span>
-            <span className="px-3 py-1 rounded text-xs font-semibold bg-blue-500/10 text-blue-400">70-84: Watchlist</span>
-            <span className="px-3 py-1 rounded text-xs font-semibold bg-yellow-500/10 text-yellow-500">55-69: Caution</span>
-            <span className="px-3 py-1 rounded text-xs font-semibold bg-red-500/10 text-red-500">0-54: Avoid</span>
+          <div className="flex-1" />
+
+          {/* Check for Updates (admin only) */}
+          {MANUAL_TRIGGER && (
+            <button
+              onClick={handleCheckAndDownload}
+              disabled={automationLoading || forceLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+                border border-[#2a2e3a] rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+            >
+              {automationLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {automationLoading ? 'Checking...' : 'Check for Updates'}
+            </button>
+          )}
+
+          {/* Force Analysis (admin only) */}
+          {MANUAL_TRIGGER && (
+            <button
+              onClick={handleForceAnalysis}
+              disabled={automationLoading || forceLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+                border border-orange-500/30 rounded-lg text-sm font-medium transition-all disabled:opacity-50
+                text-orange-400 hover:text-orange-300"
+            >
+              {forceLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {forceLoading ? 'Analyzing...' : 'Force Analysis'}
+            </button>
+          )}
+
+          {/* Compare Performance */}
+          <button
+            onClick={() => setShowComparison(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#1a1d27] hover:bg-[#242836]
+              border border-purple-500/30 rounded-lg text-sm font-medium transition-all
+              text-purple-400 hover:text-purple-300"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Compare Performance
+          </button>
+        </div>
+
+        {/* Date Navigation */}
+        {dates.length > 0 && (
+          <div className="flex items-center justify-center gap-4 mb-6">
+            <button
+              onClick={handlePrevDate}
+              disabled={currentDateIdx >= dates.length - 1 || loading}
+              className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
+                disabled:opacity-30 transition-all"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            <div className="text-center min-w-[200px]">
+              <div className="text-lg font-bold">{currentDate?.analysisDate}</div>
+              {currentDate?.listUpdateDate && (
+                <div className="text-xs text-[#8b8fa3]">
+                  List update: {currentDate.listUpdateDate}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={handleNextDate}
+              disabled={currentDateIdx <= 0 || loading}
+              className="p-2 rounded-lg bg-[#1a1d27] hover:bg-[#242836] border border-[#2a2e3a]
+                disabled:opacity-30 transition-all"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+
+            <span className="text-xs text-[#8b8fa3]">
+              {currentDateIdx + 1} of {dates.length}
+            </span>
           </div>
+        )}
 
-          {/* Portfolio Section */}
-          <PortfolioSection
-            rankingId={ranking.id}
-            portfolioId={ranking.portfolioId}
-            portfolioStatus={ranking.portfolioStatus}
-            listName={activeTab}
-            analysisDate={currentDate?.analysisDate}
-            onChange={handlePortfolioChange}
-            showToast={showToast}
+        {/* Loading */}
+        {loading && (
+          <div className="text-center py-16">
+            <Loader2 className="w-10 h-10 animate-spin text-[#4f8ff7] mx-auto mb-4" />
+            <p className="text-[#8b8fa3]">Loading rankings...</p>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="text-center py-16 text-red-400">
+            <p>{error}</p>
+          </div>
+        )}
+
+        {/* No Data */}
+        {!loading && !error && !ranking?.found && (
+          <div className="text-center py-16">
+            <TrendingUp className="w-12 h-12 text-[#2a2e3a] mx-auto mb-4" />
+            <p className="text-[#8b8fa3] mb-2">No ranking data available for {TAB_LABELS[activeTab]}</p>
+            <p className="text-[#8b8fa3] text-sm">
+              Data is automatically downloaded and analyzed on trading days
+            </p>
+          </div>
+        )}
+
+        {/* Results */}
+        {!loading && ranking?.found && (
+          <>
+            {/* SPY Info + Meta */}
+            <div className="flex items-center gap-4 mb-4 text-xs text-[#8b8fa3]">
+              {ranking.spyData && (
+                <span>
+                  SPY: 1M {ranking.spyData.return1m >= 0 ? '+' : ''}{ranking.spyData.return1m.toFixed(1)}%
+                  {' | '}
+                  3M {ranking.spyData.return3m >= 0 ? '+' : ''}{ranking.spyData.return3m.toFixed(1)}%
+                </span>
+              )}
+              <span>{ranking.stockCount} stocks analyzed</span>
+            </div>
+
+            {/* Legend */}
+            <div className="flex gap-3 mb-4 flex-wrap">
+              <span className="px-3 py-1 rounded text-xs font-semibold bg-green-500/10 text-green-500">85-100: Prime Entry</span>
+              <span className="px-3 py-1 rounded text-xs font-semibold bg-blue-500/10 text-blue-400">70-84: Watchlist</span>
+              <span className="px-3 py-1 rounded text-xs font-semibold bg-yellow-500/10 text-yellow-500">55-69: Caution</span>
+              <span className="px-3 py-1 rounded text-xs font-semibold bg-red-500/10 text-red-500">0-54: Avoid</span>
+            </div>
+
+            {/* Portfolio Section */}
+            <PortfolioSection
+              rankingId={ranking.id}
+              portfolioId={ranking.portfolioId}
+              portfolioStatus={ranking.portfolioStatus}
+              listName={activeTab}
+              analysisDate={currentDate?.analysisDate}
+              onChange={handlePortfolioChange}
+              showToast={showToast}
+            />
+
+            {/* Ranking Table */}
+            <RankingTable
+              results={ranking.results}
+              onSelectStock={setSelectedStock}
+            />
+
+            {/* EMA Analysis Section */}
+            <EmaAnalysisSection
+              listName={activeTab}
+              analysisDate={currentDate?.analysisDate}
+            />
+          </>
+        )}
+
+        {/* Stock Detail Modal */}
+        {selectedStock && (
+          <StockDetailModal
+            stock={selectedStock}
+            onClose={() => setSelectedStock(null)}
           />
+        )}
 
-          {/* Ranking Table */}
-          <RankingTable
-            results={ranking.results}
-            onSelectStock={setSelectedStock}
-          />
-
-          {/* EMA Analysis Section */}
-          <EmaAnalysisSection
-            listName={activeTab}
-            analysisDate={currentDate?.analysisDate}
-          />
-        </>
-      )}
-
-      {/* Stock Detail Modal */}
-      {selectedStock && (
-        <StockDetailModal
-          stock={selectedStock}
-          onClose={() => setSelectedStock(null)}
-        />
-      )}
-
-      {/* Performance Comparison Modal */}
-      {showComparison && (
-        <PerformanceComparison onClose={() => setShowComparison(false)} />
-      )}
+        {/* Performance Comparison Modal */}
+        {showComparison && (
+          <PerformanceComparison onClose={() => setShowComparison(false)} />
+        )}
+      </div>
     </div>
   );
 }
