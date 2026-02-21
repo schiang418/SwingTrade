@@ -52,15 +52,12 @@ These features were built before this plan was created. Listed for completeness 
 | 2.3 | Add `VITE_MEMBER_PORTAL_URL` to frontend env | `.env.example` |
 | 2.4 | Add startup validation for required auth env vars | `server/index.js` |
 
-**Dev/Prod mode (aligned with OptionStrategy):**
-- **Development:** Auth is **optional**. If `PREMIUM_TOKEN_SECRET`, `JWT_SECRET`, and `MEMBER_PORTAL_URL` are all missing, log a warning and run without auth. This allows local development without portal secrets.
-- **Production (`NODE_ENV=production`):** Auth is **required**. Server fails fast if any auth env var is missing.
+**Auth is always required.** Server fails fast on startup if `PREMIUM_TOKEN_SECRET`, `JWT_SECRET`, or `MEMBER_PORTAL_URL` is missing — no dev/prod distinction, no optional mode. Local development must use real (or test) auth secrets.
 
 **Acceptance criteria:**
 - `jose` and `cookie-parser` in `dependencies`
 - `.env.example` documents all auth vars
-- Production: server fails fast with clear error if auth vars are missing
-- Development: server warns but starts without auth vars
+- Server refuses to start if any auth env var is missing
 
 ---
 
@@ -88,7 +85,6 @@ These features were built before this plan was created. Listed for completeness 
 - `handleAuthHandoff` verifies token, validates service claim + tier, creates session cookie, redirects to `/`
 - `requireAuth` reads cookie, verifies JWT, attaches `req.user`, returns 401 on failure
 - Error codes are lowercase snake_case (Discrepancy #10)
-- When auth is disabled (dev mode), `requireAuth` passes through without checking
 
 ---
 
@@ -99,7 +95,7 @@ These features were built before this plan was created. Listed for completeness 
 | # | Task | Files Affected |
 |---|------|---------------|
 | 4.1 | Add `cookie-parser` middleware | `server/index.js` |
-| 4.2 | Restrict CORS to `MEMBER_PORTAL_URL` with `credentials: true` (when auth enabled; open in dev) | `server/index.js` |
+| 4.2 | Restrict CORS to `MEMBER_PORTAL_URL` with `credentials: true` | `server/index.js` |
 | 4.3 | Register `GET /auth/handoff` route (before API routes) | `server/index.js` |
 | 4.4 | Apply `requireAuth` to all `/api/*` routes (except `/api/health`) | `server/index.js` |
 | 4.5 | **Refactor cron jobs to call service functions directly (bypass HTTP/auth)** | `server/index.js` |
@@ -116,7 +112,7 @@ await fetch(`http://localhost:${PORT}/api/portfolios/${p.id}/update-prices`, { m
 Once `requireAuth` is applied, these will fail with 401 because internal HTTP calls have no session cookie. Must refactor to call the underlying service/route handler functions directly, bypassing the HTTP layer entirely — same pattern OptionStrategy uses.
 
 **Acceptance criteria:**
-- CORS restricted to `MEMBER_PORTAL_URL` when auth enabled; open in dev
+- CORS restricted to `MEMBER_PORTAL_URL` with `credentials: true`
 - `/auth/handoff?token=xxx` is accessible without session
 - `/api/health` is accessible without session
 - All other `/api/*` routes require valid session cookie
@@ -155,7 +151,7 @@ Once `requireAuth` is applied, these will fail with 401 because internal HTTP ca
 
 | # | Task | Details |
 |---|------|---------|
-| 6.1 | Verify startup validation works (production: missing vars → crash; dev: warn) | Remove auth vars, confirm behavior |
+| 6.1 | Verify startup validation works (missing vars → server refuses to start) | Remove auth vars, confirm crash |
 | 6.2 | Test handoff flow: portal → token → session cookie | Manual or scripted test |
 | 6.3 | Test auth middleware: valid cookie → 200, no cookie → 401, expired → 401 | curl or test script |
 | 6.4 | Test tier rejection: token with wrong tier → redirect with `error=upgrade_required` | Manual test |
@@ -250,7 +246,7 @@ These resolutions from the cross-project discrepancies report are incorporated:
 ## Risk Notes
 
 - **Cron job refactoring required** — Internal HTTP calls must be replaced with direct function calls before auth goes live. Failure to do this will break automated workflows.
-- **Dev/Prod mode** — Auth is optional in dev, required in production. Aligned with OptionStrategy's approach.
+- **Auth is always on** — No optional mode. Local development requires auth secrets (use test values).
 - **Env vars must be coordinated with portal deployment** — `PREMIUM_TOKEN_SECRET` must match portal's `SWINGTRADE_TOKEN_SECRET`.
 - **Railway proxy** — `secure` cookie flag may need `X-Forwarded-Proto` check instead of `NODE_ENV` check.
 - **Promotional access** — Currently both `basic` and `stocks_and_options` tiers are allowed. To restrict later, simply remove `basic` from `ALLOWED_TIERS`.
@@ -263,7 +259,7 @@ Compared against OptionStrategy `docs/DEVELOPMENT_PLAN.md` (branch `claude/optio
 
 | Area | OptionStrategy | SwingTrade | Aligned |
 |------|---------------|------------|---------|
-| Auth optional in dev, required in prod | Yes | Yes (updated) | Yes |
+| Auth always required (no optional mode) | No (optional in dev) | Yes | **Diverges** — SwingTrade is stricter |
 | Cron jobs bypass HTTP when auth enabled | Yes (refactored) | Yes (planned in 4.5) | Yes |
 | `vite-env.d.ts` for Vite types | Yes | Yes (planned in 5.4) | Yes |
 | Staging/Testing/Production phases | Phases 7-9 | Phases 7-9 (added) | Yes |

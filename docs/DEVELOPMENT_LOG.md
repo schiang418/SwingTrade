@@ -45,7 +45,7 @@ All core features were built before this tracking document was created. See DEVE
 - **Date:**
 - **Notes:**
 
-### Task 2.4 — Add startup validation (dev: warn, prod: fail-fast)
+### Task 2.4 — Add startup validation (always fail-fast if auth vars missing)
 - **Status:** Pending
 - **Date:**
 - **Notes:**
@@ -78,7 +78,7 @@ All core features were built before this tracking document was created. See DEVE
 - **Date:**
 - **Notes:**
 
-### Task 4.2 — Restrict CORS to `MEMBER_PORTAL_URL` (when auth enabled)
+### Task 4.2 — Restrict CORS to `MEMBER_PORTAL_URL`
 - **Status:** Pending
 - **Date:**
 - **Notes:**
@@ -126,7 +126,7 @@ All core features were built before this tracking document was created. See DEVE
 
 ## Phase 6: Auth — Validation & Testing
 
-### Task 6.1 — Startup validation test (dev: warn, prod: fail)
+### Task 6.1 — Startup validation test (missing vars → server refuses to start)
 - **Status:** Pending
 - **Date:**
 - **Notes:**
@@ -199,12 +199,14 @@ All core features were built before this tracking document was created. See DEVE
 
 ### 2026-02-21 — Plan alignment with OptionStrategy
 After comparing with OptionStrategy's DEVELOPMENT_PLAN.md, the following gaps were identified and addressed:
-1. **Dev/Prod mode distinction added** — auth optional in dev, required in production (was: always fail-fast)
-2. **Cron job refactoring task added (4.5)** — internal HTTP calls will break under auth; must call service functions directly
-3. **`vite-env.d.ts` task added (5.4)** — TypeScript type declarations for Vite env vars
-4. **Phases 7-9 added** — Staging, Testing & Hardening, Production Deploy (was: auth-only plan)
-5. **Phase numbering shifted** — Phase 1 now covers pre-existing core features; auth starts at Phase 2
-6. **Cron validation test added (6.8)** — verify cron jobs work post-auth
+1. **Cron job refactoring task added (4.5)** — internal HTTP calls will break under auth; must call service functions directly
+2. **`vite-env.d.ts` task added (5.4)** — TypeScript type declarations for Vite env vars
+3. **Phases 7-9 added** — Staging, Testing & Hardening, Production Deploy (was: auth-only plan)
+4. **Phase numbering shifted** — Phase 1 now covers pre-existing core features; auth starts at Phase 2
+5. **Cron validation test added (6.8)** — verify cron jobs work post-auth
+
+### 2026-02-21 — Auth always required (no dev/prod distinction)
+Removed optional dev mode for auth. Auth is always required — server fails fast if env vars are missing, regardless of environment. No shortcuts. Local development must use real or test auth secrets. This diverges from OptionStrategy (which has optional auth in dev) — OptionStrategy should update to match.
 
 ---
 
