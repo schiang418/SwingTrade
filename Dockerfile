@@ -28,6 +28,10 @@ RUN pip3 install selenium --break-system-packages
 # Copy the rest of the application
 COPY . .
 
+# Declare build-time args so Railway env vars are available to Vite
+ARG VITE_MEMBER_PORTAL_URL
+ARG VITE_MANUAL_TRIGGER
+
 # Build the React frontend
 RUN npm run build
 
